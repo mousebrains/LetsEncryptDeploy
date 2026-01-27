@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-python:
+    name: Check Python scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Compile check all Python files
+        run: |
+          status=0
+          for f in $(find . -name '*.py' -not -path './.git/*' -not -path './__pycache__/*'); do
+            echo "Checking $f"
+            python3 -m py_compile "$f" || status=1
+          done
+          exit $status
+
+  scan-secrets:
+    name: Scan for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for private key material
+        run: |
+          status=0
+          for pattern in 'PRIVATE KEY' 'BEGIN RSA' 'BEGIN EC' 'BEGIN DSA' 'BEGIN OPENSSH'; do
+            if grep -r --include='*.py' --include='*.sh' --include='*.conf' --include='*.md' -l "$pattern" . 2>/dev/null; then
+              echo "::error::Found potential private key material matching '$pattern'"
+              status=1
+            fi
+          done
+          exit $status

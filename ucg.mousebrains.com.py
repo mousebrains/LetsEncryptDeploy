@@ -45,14 +45,14 @@ import os
 import sys
 import subprocess
 
-if __name__ == "__main__":
+def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name
     hostname = scriptName.removesuffix(".py")
 
     parser = ArgumentParser(f"{scriptName} deployment script")
     parser.add_argument("--logfile", type=str,
                         default=os.path.join(logDir, f"{hostname}.log"),
-                        help="Where to log to")
+                        help="Where to log to, empty for stderr")
     parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
     parser.add_argument("--certName", type=str, default="fullchain.pem",
                         help="Which certificate file to use")
@@ -65,11 +65,12 @@ if __name__ == "__main__":
     parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="SCP command to use")
     args = parser.parse_args()
 
-    logfilename = os.path.abspath(os.path.expanduser(args.logfile))
-    logdirname = os.path.dirname(logfilename)
-
-    if not os.path.isdir(logdirname):
-        os.makedirs(logdirname, exist_ok=True) # For race issues
+    logfilename = None
+    if args.logfile:
+        logfilename = os.path.abspath(os.path.expanduser(args.logfile))
+        logdirname = os.path.dirname(logfilename)
+        if not os.path.isdir(logdirname):
+            os.makedirs(logdirname, exist_ok=True) # For race issues
 
     logging.basicConfig(filename=logfilename,
                         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -127,4 +128,7 @@ if __name__ == "__main__":
     except Exception:
         logging.exception("GotMe")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
 

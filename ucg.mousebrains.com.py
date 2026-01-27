@@ -15,7 +15,7 @@
 # On your letsencrypt host, where fqdn is the UniFi gateway fully qualified hostname:
 #  3) scp /etc/letsencrypt/live/fqdn/fullchain.pem /etc/letsencrypt/live/fqdn/privkey.pem fqdn:
 #
-# Onn the UniFi Gateway:
+# On the UniFi Gateway:
 #  C) cd /data/unifi-core/config
 #  D) There will be a certificate file like bf800083-907e-44b4-af66-0a0a92fe9acc.crt
 #     and a key file bf800083-907e-44b4-af66-0a0a92fe9acc.key
@@ -23,7 +23,7 @@
 #     Copy these files for backup,
 #        cp bf800083-907e-44b4-af66-0a0a92fe9acc.crt bf800083-907e-44b4-af66-0a0a92fe9acc.crt.bak
 #        cp bf800083-907e-44b4-af66-0a0a92fe9acc.key bf800083-907e-44b4-af66-0a0a92fe9acc.key.bak
-#     Now make a symbolic link to the the new LetsEncrypt certificate and key:
+#     Now make a symbolic link to the new LetsEncrypt certificate and key:
 #        ln -sf /root/fullchain.pem bf800083-907e-44b4-af66-0a0a92fe9acc.crt
 #        ln -sf /root/privkey.pem bf800083-907e-44b4-af66-0a0a92fe9acc.key
 #  E) Now reload the certificate:
@@ -33,11 +33,11 @@
 # The script should run on the next renewal and install the updated certificate and key,
 # and force the webserver to reload them.
 #
-# The name of the script should start with the FQDN of the UniFi Gateway
+# The name of the script should be the FQDN of the UniFi Gateway (with .py extension)
 #  
 # Jan-2026 Pat Welch pat@mousebrains.com
 
-logDir = "~pat/logs" # Should be changed to your username
+logDir = "/var/log"
 
 from argparse import ArgumentParser
 import logging
@@ -45,73 +45,86 @@ import os
 import sys
 import subprocess
 
-scriptName = os.path.basename(sys.argv[0]) # This script's name
+if __name__ == "__main__":
+    scriptName = os.path.basename(sys.argv[0]) # This script's name
+    hostname = scriptName.removesuffix(".py")
 
-parser = ArgumentParser(f"{scriptName} deployment script")
-parser.add_argument("--logfile", type=str, 
-                    default=os.path.join(logDir, f"{scriptName}.log"),
-                    help="Where to log to, empty goes to stdout")
-parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
-parser.add_argument("--fqdn", type=str, help="Fully qualified domain name")
-parser.add_argument("--certName", type=str, default="fullchain.pem",
-                    help="Which certificate file to use")
-parser.add_argument("--keyName", type=str, default="privkey.pem",
-                    help="Which key file to use")
-parser.add_argument("--target", type=str,
-                    default="bf800083-907e-44b4-af66-0a0a92fe9acc",
-                    help="Target filename prefix on UniFi system")
-parser.add_argument("--unifi", type=str,
-                    default="/data/unifi-core/config",
-                    help="Target directory on UniFi system")
-parser.add_argument("--reload", type=str,
-                    default="/usr/sbin/nginx -s reload",
-                    help="How to force reloading the new certificate on the UniFi system.")
-parser.add_argument("--ssh", type=str, default="/usr/bin/ssh", help="SSH command to use")
-parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="SCP command to use")
-args = parser.parse_args()
+    parser = ArgumentParser(f"{scriptName} deployment script")
+    parser.add_argument("--logfile", type=str,
+                        default=os.path.join(logDir, f"{hostname}.log"),
+                        help="Where to log to")
+    parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
+    parser.add_argument("--certName", type=str, default="fullchain.pem",
+                        help="Which certificate file to use")
+    parser.add_argument("--keyName", type=str, default="privkey.pem",
+                        help="Which key file to use")
+    parser.add_argument("--reload", type=str,
+                        default="/usr/sbin/nginx -s reload",
+                        help="How to force reloading the new certificate on the UniFi system.")
+    parser.add_argument("--ssh", type=str, default="/usr/bin/ssh", help="SSH command to use")
+    parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="SCP command to use")
+    args = parser.parse_args()
 
-logfilename = os.path.abspath(os.path.expanduser(args.logfile))
-logdirname = os.path.dirname(logfilename)
+    logfilename = os.path.abspath(os.path.expanduser(args.logfile))
+    logdirname = os.path.dirname(logfilename)
 
-if not os.path.isdir(logdirname):
-    os.makedirs(logdirname, exist_ok=True) # For race issues
+    if not os.path.isdir(logdirname):
+        os.makedirs(logdirname, exist_ok=True) # For race issues
 
-logging.basicConfig(filename=logfilename,
-                    level=logging.DEBUG if args.verbose else logging.INFO,
-                    format="%(asctime)s %(levelname)s: %(message)s",
-                    )
-try:
-    for key in ["DOMAINS", "LINEAGE"]:
-        name = "RENEWED_" + key
-        if name not in os.environ:
-            raise KeyError(f"{name} not in environment")
+    logging.basicConfig(filename=logfilename,
+                        level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s: %(message)s",
+                        )
+    try:
+        for key in ["DOMAINS", "LINEAGE"]:
+            name = "RENEWED_" + key
+            if name not in os.environ:
+                raise KeyError(f"{name} not in environment")
 
-    domains = os.environ["RENEWED_DOMAINS"]
-    lineage = os.environ["RENEWED_LINEAGE"]
+        domains = os.environ["RENEWED_DOMAINS"].split()
+        lineage = os.environ["RENEWED_LINEAGE"]
 
-    if not scriptName.lower().startswith(domains.lower()):
-        logging.info("Mismatch %s %s", scriptName, domains)
-        sys.exit(0)
-    
-    crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
-    keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
+        if hostname not in domains:
+            logging.info("Mismatch: %s not in %s", hostname, domains)
+            sys.exit(0)
 
-    cmd = (
-            args.scp,
-            crtname,
-            keyname,
-            domains + ":",
-            )
-    sp = subprocess.run(cmd, shell=False, capture_output=True)
-    logging.info("sp %s", sp)
+        crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
+        keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
 
-    cmd = (
-            args.ssh,
-            domains,
-            args.reload,
-            )
-    sp = subprocess.run(cmd, shell=False, capture_output=True)
-    logging.info("sp %s", sp)
-except Exception:
-    logging.exception("GotMe")
+        if not os.path.isfile(crtname):
+            raise FileNotFoundError(f"Certificate file not found: {crtname}")
+        if not os.path.isfile(keyname):
+            raise FileNotFoundError(f"Key file not found: {keyname}")
+
+        cmd = (
+                args.scp,
+                crtname,
+                keyname,
+                hostname + ":",
+                )
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        logging.info("SCP returncode=%s stdout=%s stderr=%s",
+                     sp.returncode,
+                     sp.stdout.decode(errors="replace"),
+                     sp.stderr.decode(errors="replace"))
+        if sp.returncode != 0:
+            raise RuntimeError(f"SCP failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+
+        cmd = (
+                args.ssh,
+                hostname,
+                args.reload,
+                )
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        logging.info("SSH returncode=%s stdout=%s stderr=%s",
+                     sp.returncode,
+                     sp.stdout.decode(errors="replace"),
+                     sp.stderr.decode(errors="replace"))
+        if sp.returncode != 0:
+            raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+
+        logging.info("Deployment to %s completed successfully", hostname)
+    except Exception:
+        logging.exception("GotMe")
+        sys.exit(1)
 

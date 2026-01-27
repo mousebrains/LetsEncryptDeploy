@@ -1,0 +1,52 @@
+# On the LetsEncrypt host:
+
+# Create the initial certificate
+
+sudo certbot certonly --dns-cloudflare --dns-cloudflare-credentials /home/pat/.config/cloudflare.token -d uisp.mousebrains.com
+
+# Set up ~/.ssh/config for a hostname of uisp
+
+Host uisp uisp.mousebrains.com
+	HostName uisp.mousebrains.com
+	User pat
+	IdentityFile ~/.ssh/id_ed25519
+
+# Add the letsencrypt ssh public key to uisp:
+
+ssh-copy-id uisp
+
+# On the UISP host:
+
+# Create a /etc/certificates directory tree
+
+sudo mkdir -p /etc/certificates/uisp.mousebrains.com
+
+# Make it world writeable
+
+sudo chmod 777 /etc/certificates/uisp.mousebrains.com
+
+# On the LetsEncrypt host:
+
+sudo cp /etc/letsencrypt/archive/uisp.mousebrains.com /tmp
+sudo chown -R pat:pat /tmp/uisp.mousebrains.com
+rsync --archive --verbose /tmp/uisp.mousebrains.com uisp:/etc/certificates
+
+# On the UISP host create symbolic links for the certificates:
+ln -s /etc/certificates/uisp.mousebrains.com/fullchain1.pem /etc/certificates/uisp.mousebrains.com/cert.pem
+ln -s /etc/certificates/uisp.mousebrains.com/privkey1.pem /etc/certificates/uisp.mousebrains.com/key.pem
+
+# Install UISP with the SSL certs
+
+curl -fsSL https://uisp.ui.com/install > /tmp/uisp_inst.sh && \
+	sudo bash /tmp/uisp_inst.sh \
+		--subnet 172.31.0.1/24 \
+		--ssl-cert-dir /etc/certificates/uisp.mousebrains.com \
+		--ssl-cert cert.pem \
+		--ssl-cert-key key.pem
+
+# On the LetsEncrypt host:
+
+# Install the renewal-hooks/deploy script, uisp.mousebrains.com.py
+
+sudo cp uisp.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy
+

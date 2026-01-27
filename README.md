@@ -1,3 +1,16 @@
+# LetsEncrypt renewal-hooks/deploy scripts
+
+- Ubiquiti Unifi script (ucg.mousebrains.com)[ucg.mousebrains.com]
+- Ubiquiti UISP script (uisp.mousebrains.com)[uisp.mousebrains.com]
+
+These scripts are designed as deployment scripts for LetsEncrypt. 
+They should be installed in `/etc/letsencrypt/renewal-hooks/deploy`
+
+To test them you can use:
+- `sudo certbot renew --dry-run --run-deploy-hooks`
+- `sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks`
+
+
 # LetsEncryptDeploy
 
 Deployment scripts for Let's Encrypt certificate renewal to various network devices and services.

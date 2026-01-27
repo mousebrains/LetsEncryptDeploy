@@ -125,6 +125,9 @@ def main():
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
         logging.info("Deployment to %s completed successfully", hostname)
+    except (FileNotFoundError, RuntimeError) as e:
+        logging.error("%s", e)
+        sys.exit(1)
     except Exception:
         logging.exception("GotMe")
         sys.exit(1)

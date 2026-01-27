@@ -1,11 +1,12 @@
 # LetsEncryptDeploy
 
-Certbot deploy hooks for automatically deploying renewed Let's Encrypt certificates to Ubiquiti network devices via SSH.
+Certbot deploy hooks for automatically deploying renewed Let's Encrypt certificates to network devices.
 
 ## Scripts
 
 - `ucg.mousebrains.com.py` -- UniFi Cloud Gateway (copies cert/key via SCP, reloads nginx)
 - `uisp.mousebrains.com.py` -- UISP (converts to PKCS12, deploys via paramiko SSH)
+- `ljscan.mousebrains.com.py` -- HP LaserJet MFP (converts to PKCS12, uploads to EWS via curl)
 
 Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` when invoking deploy hooks; the script compares the domain list against its own filename and exits silently if there is no match.
 
@@ -41,6 +42,29 @@ Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` w
 ### On the UISP host
 
 See `README.uisp` for UISP-specific setup instructions.
+
+### HP LaserJet MFP (for ljscan)
+
+HP LaserJet printers require RSA keys (ECC keys are not supported).
+
+1. Create the certificate with an RSA key:
+   ```bash
+   sudo certbot certonly --key-type rsa -d ljscan.mousebrains.com
+   ```
+
+2. Store the printer's EWS admin password:
+   ```bash
+   echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/hp-admin-password
+   sudo chmod 600 /etc/letsencrypt/hp-admin-password
+   ```
+
+3. Install the deploy hook:
+   ```bash
+   sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
+   sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/ljscan.mousebrains.com.py
+   ```
+
+The script converts the PEM cert+key to PKCS12 and uploads it to the printer's Embedded Web Server via HTTPS. The upload endpoint (`/Security/DeviceCertificates/NewCertWithPassword/Upload`) is for newer HP FutureSmart printers. Override with `--uploadPath` if your printer uses a different endpoint.
 
 ## Testing
 

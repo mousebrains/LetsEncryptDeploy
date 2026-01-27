@@ -4,12 +4,13 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Let's Encrypt certificate deployment scripts for Ubiquiti network devices. The Python scripts are certbot renewal hooks that automatically deploy renewed certificates via SSH/SCP.
+Let's Encrypt certificate deployment scripts for network devices. The Python scripts are certbot renewal hooks that automatically deploy renewed certificates via SSH/SCP or HTTPS upload.
 
 ## Repository Structure
 
 - `ucg.mousebrains.com.py` - Certbot deploy hook for UniFi Cloud Gateway (Python)
 - `uisp.mousebrains.com.py` - Certbot deploy hook for UISP (Python, uses paramiko + cryptography)
+- `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + curl)
 - `README.uisp` - UISP-specific setup notes
 
 ## Languages and Tools
@@ -17,6 +18,7 @@ Let's Encrypt certificate deployment scripts for Ubiquiti network devices. The P
 - **Python 3.10+** for certbot deploy hooks (`*.py`)
 - **certbot** for Let's Encrypt certificate management
 - **SSH/SCP** for remote certificate deployment
+- **openssl** and **curl** for PKCS12 conversion and HTTPS upload (HP printer)
 - No package manager or build system; scripts are standalone
 
 ## Common Commands
@@ -47,6 +49,8 @@ sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks
 - Never commit certificate files (`.pem`, `.key`) or SSH keys (`id_rsa*`); these are in `.gitignore`.
 - Scripts run as root. SSH key paths default to `/root/.ssh/`.
 - Deploy hooks use SSH key authentication configured in `/root/.ssh/config`.
+- HP printer admin password is stored in `/etc/letsencrypt/hp-admin-password` (mode 600).
+- HP LaserJet printers require RSA keys; ECC keys are not supported.
 
 ## License
 

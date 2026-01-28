@@ -7,7 +7,9 @@
 # by HP LaserJet printers.
 #
 # Authentication uses the printer's CDM OAuth2 API:
-#   POST /cdm/security/v1/authenticate  -> bearer token
+#   GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
+#   POST /cdm/security/v1/authenticate  -> get authorization code
+#   POST /cdm/oauth2/v1/token           -> exchange code for token
 #   POST /cdm/certificate/v1/certificates -> upload PKCS12
 #
 # On your letsencrypt host:
@@ -28,64 +30,49 @@ logDir = "/var/log"
 
 from argparse import ArgumentParser
 import base64
-import http.cookiejar
 import json
 import logging
 import os
 import secrets
-import ssl
 import sys
 import subprocess
 import tempfile
 import urllib.parse
-import urllib.request
-import urllib.error
 import uuid
 
-def mkSSLContext() -> ssl.SSLContext:
-    """Create an SSL context that skips verification (printer may have
-    an expired or self-signed certificate)."""
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+def curlGET(curl:str, url:str, cookieJar:str=None) -> subprocess.CompletedProcess:
+    """GET a URL with curl, optionally saving cookies."""
+    cmd = [curl, "-sk", url]
+    if cookieJar:
+        cmd += ["-c", cookieJar]
+    sp = subprocess.run(cmd, capture_output=True, timeout=180)
+    logging.info("GET %s returncode=%s", url, sp.returncode)
+    return sp
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Return 3xx responses directly instead of following redirects."""
-    def http_error_302(self, req, fp, code, msg, hdrs):
-        return fp
-    http_error_301 = http_error_303 = http_error_307 = http_error_302
-
-def mkOpener(ctx:ssl.SSLContext) -> urllib.request.OpenerDirector:
-    """Create a URL opener with a cookie jar, SSL context, and no
-    automatic redirect following."""
-    jar = http.cookiejar.CookieJar()
-    return urllib.request.build_opener(
-        urllib.request.HTTPCookieProcessor(jar),
-        urllib.request.HTTPSHandler(context=ctx),
-        _NoRedirectHandler(),
-    )
-
-def postJSON(opener:urllib.request.OpenerDirector, url:str,
-             payload:dict, bearer:str=None) -> dict:
-    """POST a JSON payload and return the parsed JSON response."""
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json, text/plain, */*")
-    req.add_header("X-Client-Info", "HP-Web-Client")
+def curlPOST(curl:str, url:str, data:str, contentType:str="application/json",
+             cookieJar:str=None, bearer:str=None) -> subprocess.CompletedProcess:
+    """POST data with curl, optionally sending cookies or bearer token."""
+    cmd = [curl, "-sk", "-X", "POST", url,
+           "-H", f"Content-Type: {contentType}",
+           "-H", "X-Client-Info: HP-Web-Client",
+           "-H", f"Origin: https://{urllib.parse.urlparse(url).hostname}",
+           "-d", data]
+    if cookieJar:
+        cmd += ["-b", cookieJar]
     if bearer:
-        req.add_header("Authorization", f"Bearer {bearer}")
+        cmd += ["-H", f"Authorization: Bearer {bearer}"]
+    sp = subprocess.run(cmd, capture_output=True, timeout=180)
+    logging.info("POST %s returncode=%s stdout=%s stderr=%s",
+                 url, sp.returncode,
+                 sp.stdout.decode(errors="replace"),
+                 sp.stderr.decode(errors="replace"))
+    if sp.returncode != 0:
+        raise RuntimeError(f"curl POST {url} failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+    return sp
 
-    response = opener.open(req, timeout=180)
-    body = response.read().decode(errors="replace")
-    logging.info("POST %s status=%s body=%s", url, response.status, body)
-    return json.loads(body) if body.strip() else {}
-
-def authenticate(opener:urllib.request.OpenerDirector,
-                 hostname:str, username:str, password:str) -> str:
+def authenticate(curl:str, hostname:str, username:str, password:str) -> str:
     """Authenticate to the printer's CDM OAuth2 API and return a
-    bearer token.  Three-step flow:
+    bearer token.  Three-step flow using curl:
       1) GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
       2) POST /cdm/security/v1/authenticate  -> get authorization code
       3) POST /cdm/oauth2/v1/token           -> exchange code for token
@@ -98,105 +85,82 @@ def authenticate(opener:urllib.request.OpenerDirector,
         json.dumps({"lang": "en", "theme": "theme-light"},
                    separators=(",", ":")).encode()
     ).decode()
-    origin = f"https://{hostname}"
     redirect_uri = f"https://{hostname}/index.html"
-    user_agent = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
 
-    def _common_headers(req):
-        req.add_header("User-Agent", user_agent)
-        req.add_header("X-Client-Info", "HP-Web-Client")
-        return req
+    fd, cookieJar = tempfile.mkstemp(suffix=".cookies")
+    os.close(fd)
+    try:
+        # Step 1: GET the authorize endpoint to create the OAuth2 session
+        auth_params = urllib.parse.urlencode({
+            "response_type": "code",
+            "client_id": client_id,
+            "state": state,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "appData": app_data,
+        })
+        auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
+        curlGET(curl, auth_url, cookieJar=cookieJar)
 
-    # Step 1: GET the authorize endpoint to create the OAuth2 session
-    auth_params = urllib.parse.urlencode({
-        "response_type": "code",
-        "client_id": client_id,
-        "state": state,
-        "redirect_uri": redirect_uri,
-        "scope": scope,
-        "appData": app_data,
-    })
-    auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
-    logging.info("AUTH step 1: GET %s", auth_url)
-    req1 = urllib.request.Request(auth_url)
-    req1.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-    _common_headers(req1)
-    resp1 = opener.open(req1, timeout=180)
-    resp1.read()  # consume body
-    logging.info("AUTH step 1: status=%s", resp1.status)
+        # Step 2: POST credentials to the authenticate endpoint
+        payload = json.dumps({
+            "agentId": str(uuid.uuid4()),
+            "username": username,
+            "password": password,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": scope,
+            "state": state,
+            "grant_type": "authorization_code",
+        })
+        sp2 = curlPOST(curl,
+                        f"https://{hostname}/cdm/security/v1/authenticate",
+                        payload, cookieJar=cookieJar)
+        result2 = json.loads(sp2.stdout)
+        logging.info("AUTH step 2: %s", result2)
 
-    # Step 2: POST credentials to the authenticate endpoint
-    url = f"https://{hostname}/cdm/security/v1/authenticate"
-    payload = {
-        "agentId": str(uuid.uuid4()),
-        "username": username,
-        "password": password,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "scope": scope,
-        "state": state,
-        "grant_type": "authorization_code",
-    }
-    data = json.dumps(payload).encode("utf-8")
-    req2 = urllib.request.Request(url, data=data, method="POST")
-    req2.add_header("Content-Type", "application/json")
-    req2.add_header("Accept", "application/json, text/plain, */*")
-    req2.add_header("Accept-Language", "en")
-    req2.add_header("Origin", origin)
-    _common_headers(req2)
+        if result2.get("error"):
+            raise RuntimeError(
+                f"Authentication failed: {result2.get('error')}\n"
+                f"  response={result2}"
+            )
 
-    resp2 = opener.open(req2, timeout=180)
-    body2 = resp2.read().decode(errors="replace")
-    logging.info("AUTH step 2: status=%s body=%s", resp2.status, body2)
+        code = result2.get("code")
+        if not code:
+            redir = result2.get("redirect_uri", "")
+            parsed = urllib.parse.urlparse(redir)
+            code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+        if not code:
+            raise RuntimeError(
+                f"No authorization code in authenticate response.\n"
+                f"  response={result2}"
+            )
 
-    result2 = json.loads(body2) if body2.strip() else {}
-    if result2.get("error"):
-        raise RuntimeError(
-            f"Authentication failed: {result2.get('error')}\n"
-            f"  body={body2!r}"
-        )
+        # Step 3: Exchange the authorization code for an access token
+        token_data = urllib.parse.urlencode({
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": f"https://{hostname}/",
+            "client_id": client_id,
+        })
+        sp3 = curlPOST(curl,
+                        f"https://{hostname}/cdm/oauth2/v1/token",
+                        token_data,
+                        contentType="application/x-www-form-urlencoded")
+        result3 = json.loads(sp3.stdout)
+        logging.info("AUTH step 3: token_type=%s expires_in=%s",
+                     result3.get("token_type"), result3.get("expires_in"))
 
-    # The response contains a redirect_uri with a code parameter,
-    # or the code may be in the JSON body.
-    code = result2.get("code")
-    if not code:
-        # Check if there's a redirect_uri with a code query param
-        redir = result2.get("redirect_uri", "")
-        parsed = urllib.parse.urlparse(redir)
-        code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
-    if not code:
-        raise RuntimeError(
-            f"No authorization code in authenticate response.\n"
-            f"  body={body2!r}"
-        )
-
-    # Step 3: Exchange the authorization code for an access token
-    token_url = f"https://{hostname}/cdm/oauth2/v1/token"
-    token_data = urllib.parse.urlencode({
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": f"https://{hostname}/",
-        "client_id": client_id,
-    }).encode("utf-8")
-    req3 = urllib.request.Request(token_url, data=token_data, method="POST")
-    req3.add_header("Content-Type", "application/x-www-form-urlencoded")
-    req3.add_header("Accept", "application/json, text/plain, */*")
-    req3.add_header("Origin", origin)
-    _common_headers(req3)
-
-    resp3 = opener.open(req3, timeout=180)
-    body3 = resp3.read().decode(errors="replace")
-    logging.info("AUTH step 3: status=%s body=%s", resp3.status, body3)
-
-    result3 = json.loads(body3)
-    token = result3.get("access_token")
-    if not token:
-        raise RuntimeError(
-            f"No access_token in token response.\n"
-            f"  body={body3!r}"
-        )
-    return token
+        token = result3.get("access_token")
+        if not token:
+            raise RuntimeError(
+                f"No access_token in token response.\n"
+                f"  response={result3}"
+            )
+        return token
+    finally:
+        if os.path.isfile(cookieJar):
+            os.unlink(cookieJar)
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name
@@ -221,6 +185,8 @@ def main():
                         help="EWS certificate API path")
     parser.add_argument("--openssl", type=str, default="/usr/bin/openssl",
                         help="OpenSSL command to use")
+    parser.add_argument("--curl", type=str, default="/usr/bin/curl",
+                        help="curl command to use")
     args = parser.parse_args()
 
     logfilename = None
@@ -290,31 +256,25 @@ def main():
         with open(pfxPath, "rb") as fp:
             pfxData = base64.b64encode(fp.read()).decode("ascii")
 
-        ctx = mkSSLContext()
-        opener = mkOpener(ctx)
-
         # Authenticate to get a bearer token
-        token = authenticate(opener, hostname, args.adminUser, adminPassword)
+        token = authenticate(args.curl, hostname, args.adminUser, adminPassword)
 
         # Upload the certificate
-        url = f"https://{hostname}{args.uploadPath}"
-        payload = {
+        uploadPayload = json.dumps({
             "certificateData": pfxData,
             "certificateFormat": "pkcs12",
             "password": pfxPassword,
             "privateKeyExportable": False,
             "requestType": "importId",
             "version": "1.1.0",
-        }
-        postJSON(opener, url, payload, bearer=token)
+        })
+        curlPOST(args.curl,
+                  f"https://{hostname}{args.uploadPath}",
+                  uploadPayload, bearer=token)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except (FileNotFoundError, RuntimeError) as e:
         logging.error("%s", e)
-        sys.exit(1)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace") if e.fp else ""
-        logging.error("HTTP %s %s: %s", e.code, e.reason, body)
         sys.exit(1)
     except Exception:
         logging.exception("GotMe")

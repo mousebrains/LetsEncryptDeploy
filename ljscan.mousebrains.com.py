@@ -81,39 +81,48 @@ def authenticate(opener:urllib.request.OpenerDirector,
     state = secrets.token_urlsafe(48)
     client_id = "com.hp.cdm.client.hpEws"
     scope = "com.hp.cdm.auth.alias.deviceRole.deviceAdmin"
+    app_data = base64.b64encode(
+        json.dumps({"lang": "en", "theme": "theme-light"}).encode()
+    ).decode()
+    origin = f"https://{hostname}"
 
-    # Step 1: GET the authorize endpoint to establish session cookies
+    # Step 1: GET the login page to establish a session
     params = urllib.parse.urlencode({
-        "response_type": "code",
         "client_id": client_id,
         "state": state,
-        "redirect_uri": f"https://{hostname}/",
-        "scope": scope,
+        "appData": app_data,
     })
-    auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{params}"
-    logging.info("AUTH step 1: GET %s", auth_url)
-    resp1 = opener.open(auth_url, timeout=180)
+    login_url = f"https://{hostname}/device/security/login/?{params}"
+    logging.info("AUTH step 1: GET %s", login_url)
+    req1 = urllib.request.Request(login_url)
+    req1.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    resp1 = opener.open(req1, timeout=180)
     body1 = resp1.read().decode(errors="replace")
-    logging.info("AUTH step 1: status=%s url=%s headers=%s body=%s",
-                 resp1.status, resp1.url, dict(resp1.getheaders()), body1)
+    logging.info("AUTH step 1: status=%s url=%s headers=%s",
+                 resp1.status, resp1.url, dict(resp1.getheaders()))
 
     # Step 2: POST credentials to the authenticate endpoint
     url = f"https://{hostname}/cdm/security/v1/authenticate"
     payload = {
         "agentId": str(uuid.uuid4()),
+        "username": username,
+        "password": password,
         "client_id": client_id,
         "client_secret": "98429f9c-f357-4746-ab0f-eeef094430ce",
-        "grant_type": "authorization_code",
-        "password": password,
         "scope": scope,
         "state": state,
-        "username": username,
+        "grant_type": "authorization_code",
     }
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
+    req2 = urllib.request.Request(url, data=data, method="POST")
+    req2.add_header("Content-Type", "application/json")
+    req2.add_header("Accept", "application/json, text/plain, */*")
+    req2.add_header("Accept-Language", "en")
+    req2.add_header("Origin", origin)
+    req2.add_header("Referer", f"{origin}/?{params}")
+    req2.add_header("X-Client-Info", "HP-Web-Client")
 
-    resp2 = opener.open(req, timeout=180)
+    resp2 = opener.open(req2, timeout=180)
     headers = dict(resp2.getheaders())
     body = resp2.read().decode(errors="replace")
     logging.info("AUTH step 2: status=%s headers=%s body=%s",

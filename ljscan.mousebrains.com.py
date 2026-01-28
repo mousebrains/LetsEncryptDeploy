@@ -86,15 +86,18 @@ def authenticate(opener:urllib.request.OpenerDirector,
     ).decode()
     origin = f"https://{hostname}"
 
-    # Step 1: GET the login page to establish a session
-    params = urllib.parse.urlencode({
+    # Step 1: GET the authorize endpoint to create the OAuth2 session
+    auth_params = urllib.parse.urlencode({
+        "response_type": "code",
         "client_id": client_id,
         "state": state,
+        "redirect_uri": f"https://{hostname}/",
+        "scope": scope,
         "appData": app_data,
     })
-    login_url = f"https://{hostname}/device/security/login/?{params}"
-    logging.info("AUTH step 1: GET %s", login_url)
-    req1 = urllib.request.Request(login_url)
+    auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
+    logging.info("AUTH step 1: GET %s", auth_url)
+    req1 = urllib.request.Request(auth_url)
     req1.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     resp1 = opener.open(req1, timeout=180)
     body1 = resp1.read().decode(errors="replace")
@@ -119,7 +122,12 @@ def authenticate(opener:urllib.request.OpenerDirector,
     req2.add_header("Accept", "application/json, text/plain, */*")
     req2.add_header("Accept-Language", "en")
     req2.add_header("Origin", origin)
-    req2.add_header("Referer", f"{origin}/?{params}")
+    referer_params = urllib.parse.urlencode({
+        "client_id": client_id,
+        "state": state,
+        "appData": app_data,
+    })
+    req2.add_header("Referer", f"{origin}/?{referer_params}")
     req2.add_header("X-Client-Info", "HP-Web-Client")
 
     resp2 = opener.open(req2, timeout=180)

@@ -49,7 +49,7 @@ sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks
 - Never commit certificate files (`.pem`, `.key`) or SSH keys (`id_rsa*`); these are in `.gitignore`.
 - Scripts run as root. SSH key paths default to `/root/.ssh/`.
 - Deploy hooks use SSH key authentication configured in `/root/.ssh/config`.
-- HP printer admin password is stored in `/etc/letsencrypt/hp-admin-password` (mode 600).
+- HP printer admin password is stored in `/etc/letsencrypt/ljscan.admin.password` (mode 600).
 - HP LaserJet printers require RSA keys; ECC keys are not supported.
 
 ## License

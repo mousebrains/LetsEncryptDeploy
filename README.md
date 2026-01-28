@@ -54,8 +54,8 @@ HP LaserJet printers require RSA keys (ECC keys are not supported).
 
 2. Store the printer's EWS admin password:
    ```bash
-   echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/hp-admin-password
-   sudo chmod 600 /etc/letsencrypt/hp-admin-password
+   echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/ljscan.admin.password
+   sudo chmod 600 /etc/letsencrypt/ljscan.admin.password
    ```
 
 3. Install the deploy hook:

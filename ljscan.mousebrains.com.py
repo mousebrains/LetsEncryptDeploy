@@ -10,8 +10,8 @@
 #  1) Create the certificate with an RSA key:
 #     sudo certbot certonly --key-type rsa -d ljscan.mousebrains.com
 #  2) Store the printer's EWS admin password in a file:
-#     echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/hp-admin-password
-#     sudo chmod 600 /etc/letsencrypt/hp-admin-password
+#     echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/ljscan.admin.password
+#     sudo chmod 600 /etc/letsencrypt/ljscan.admin.password
 #  3) Install this script:
 #     sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
 #     sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/ljscan.mousebrains.com.py
@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--keyName", type=str, default="privkey.pem",
                         help="Which key file to use")
     parser.add_argument("--adminPasswordFile", type=str,
-                        default="/etc/letsencrypt/hp-admin-password",
+                        default="/etc/letsencrypt/ljscan.admin.password",
                         help="File containing the printer's EWS admin password")
     parser.add_argument("--uploadPath", type=str,
                         default="/cdm/certificate/v1/certificates",

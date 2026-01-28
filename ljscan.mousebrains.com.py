@@ -74,24 +74,29 @@ def postJSON(opener:urllib.request.OpenerDirector, url:str,
 
 def authenticate(opener:urllib.request.OpenerDirector,
                  hostname:str, username:str, password:str) -> str:
-    """Authenticate to the printer's CDM OAuth2 API and return the
-    bearer token.  Uses a two-step flow: first GET the authorize
-    endpoint to establish a session, then POST credentials to the
-    authenticate endpoint."""
+    """Authenticate to the printer's CDM OAuth2 API and return a
+    bearer token.  Three-step flow:
+      1) GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
+      2) POST /cdm/security/v1/authenticate  -> get authorization code
+      3) POST /cdm/oauth2/v1/token           -> exchange code for token
+    """
     state = secrets.token_urlsafe(48)
     client_id = "com.hp.cdm.client.hpEws"
+    client_secret = "98429f9c-f357-4746-ab0f-eeef094430ce"
     scope = "com.hp.cdm.auth.alias.deviceRole.deviceAdmin"
     app_data = base64.b64encode(
-        json.dumps({"lang": "en", "theme": "theme-light"}).encode()
+        json.dumps({"lang": "en", "theme": "theme-light"},
+                   separators=(",", ":")).encode()
     ).decode()
     origin = f"https://{hostname}"
+    redirect_uri = f"https://{hostname}/index.html"
 
     # Step 1: GET the authorize endpoint to create the OAuth2 session
     auth_params = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": client_id,
         "state": state,
-        "redirect_uri": f"https://{hostname}/",
+        "redirect_uri": redirect_uri,
         "scope": scope,
         "appData": app_data,
     })
@@ -100,9 +105,8 @@ def authenticate(opener:urllib.request.OpenerDirector,
     req1 = urllib.request.Request(auth_url)
     req1.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     resp1 = opener.open(req1, timeout=180)
-    body1 = resp1.read().decode(errors="replace")
-    logging.info("AUTH step 1: status=%s url=%s headers=%s",
-                 resp1.status, resp1.url, dict(resp1.getheaders()))
+    resp1.read()  # consume body
+    logging.info("AUTH step 1: status=%s url=%s", resp1.status, resp1.url)
 
     # Step 2: POST credentials to the authenticate endpoint
     url = f"https://{hostname}/cdm/security/v1/authenticate"
@@ -111,7 +115,7 @@ def authenticate(opener:urllib.request.OpenerDirector,
         "username": username,
         "password": password,
         "client_id": client_id,
-        "client_secret": "98429f9c-f357-4746-ab0f-eeef094430ce",
+        "client_secret": client_secret,
         "scope": scope,
         "state": state,
         "grant_type": "authorization_code",
@@ -122,43 +126,59 @@ def authenticate(opener:urllib.request.OpenerDirector,
     req2.add_header("Accept", "application/json, text/plain, */*")
     req2.add_header("Accept-Language", "en")
     req2.add_header("Origin", origin)
-    referer_params = urllib.parse.urlencode({
-        "client_id": client_id,
-        "state": state,
-        "appData": app_data,
-    })
-    req2.add_header("Referer", f"{origin}/?{referer_params}")
     req2.add_header("X-Client-Info", "HP-Web-Client")
 
     resp2 = opener.open(req2, timeout=180)
-    headers = dict(resp2.getheaders())
-    body = resp2.read().decode(errors="replace")
-    logging.info("AUTH step 2: status=%s headers=%s body=%s",
-                 resp2.status, headers, body)
+    body2 = resp2.read().decode(errors="replace")
+    logging.info("AUTH step 2: status=%s body=%s", resp2.status, body2)
 
-    # Try JSON body first
-    if body.strip():
-        result = json.loads(body)
-        token = result.get("access_token")
-        if token:
-            return token
+    result2 = json.loads(body2) if body2.strip() else {}
+    if result2.get("error"):
+        raise RuntimeError(
+            f"Authentication failed: {result2.get('error')}\n"
+            f"  body={body2!r}"
+        )
 
-    # Check response headers for the token
-    for hdr in ("X-Auth-Token", "Authorization"):
-        value = resp2.getheader(hdr, "")
-        if value:
-            # Strip "Bearer " prefix if present
-            if value.lower().startswith("bearer "):
-                return value[7:]
-            return value
+    # The response contains a redirect_uri with a code parameter,
+    # or the code may be in the JSON body.
+    code = result2.get("code")
+    if not code:
+        # Check if there's a redirect_uri with a code query param
+        redir = result2.get("redirect_uri", "")
+        parsed = urllib.parse.urlparse(redir)
+        code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+    if not code:
+        raise RuntimeError(
+            f"No authorization code in authenticate response.\n"
+            f"  body={body2!r}"
+        )
 
-    raise RuntimeError(
-        f"Authentication failed, no bearer token found in body or headers.\n"
-        f"  step 1 status={resp1.status}\n"
-        f"  step 2 status={resp2.status}\n"
-        f"  step 2 headers={headers}\n"
-        f"  step 2 body={body!r}"
-    )
+    # Step 3: Exchange the authorization code for an access token
+    token_url = f"https://{hostname}/cdm/oauth2/v1/token"
+    token_data = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": f"https://{hostname}/",
+        "client_id": client_id,
+    }).encode("utf-8")
+    req3 = urllib.request.Request(token_url, data=token_data, method="POST")
+    req3.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req3.add_header("Accept", "application/json, text/plain, */*")
+    req3.add_header("Origin", origin)
+    req3.add_header("X-Client-Info", "HP-Web-Client")
+
+    resp3 = opener.open(req3, timeout=180)
+    body3 = resp3.read().decode(errors="replace")
+    logging.info("AUTH step 3: status=%s body=%s", resp3.status, body3)
+
+    result3 = json.loads(body3)
+    token = result3.get("access_token")
+    if not token:
+        raise RuntimeError(
+            f"No access_token in token response.\n"
+            f"  body={body3!r}"
+        )
+    return token
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name

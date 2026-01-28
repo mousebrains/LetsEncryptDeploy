@@ -159,7 +159,7 @@ def main():
     parser.add_argument("--adminPasswordFile", type=str,
                         default="/etc/letsencrypt/ljscan.admin.password",
                         help="File containing the printer's EWS admin password")
-    parser.add_argument("--adminUser", type=str, default="admin",
+    parser.add_argument("--adminUser", type=str, default="Admin",
                         help="EWS admin username")
     parser.add_argument("--uploadPath", type=str,
                         default="/cdm/certificate/v1/certificates",

@@ -94,12 +94,6 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
     the HTTP keep-alive connection is reused and the server can track
     the session across requests.
     """
-    # Spoof a browser User-Agent on every request.  The printer's CDM
-    # API may reject non-browser clients.
-    ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-          "AppleWebKit/537.36 (KHTML, like Gecko) "
-          "Chrome/144.0.0.0 Safari/537.36")
-
     state = secrets.token_urlsafe(48)
     client_id = "com.hp.cdm.client.hpEws"
     client_secret = "98429f9c-f357-4746-ab0f-eeef094430ce"
@@ -164,7 +158,6 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
         #   3. POST authenticate (with Referer + Origin)
         # All share the same TCP/TLS connection via HTTP keep-alive.
         cmd = [curl, "-sk", "-L",
-               "-A", ua,
                "-c", cookieJar, "-b", cookieJar,
                "-o", "/dev/null",
                auth_url]
@@ -173,7 +166,6 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
 
         for path in pre_auth_paths:
             cmd += ["--next", "-sk",
-                    "-A", ua,
                     "-c", cookieJar, "-b", cookieJar,
                     "-H", f"Referer: {referer}",
                     "-o", "/dev/null",
@@ -181,7 +173,6 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
 
         cmd += ["--next", "-sk",
                 "-X", "POST",
-                "-A", ua,
                 "-c", cookieJar, "-b", cookieJar,
                 "-H", "Content-Type: application/json",
                 "-H", "X-Client-Info: HP-Web-Client",

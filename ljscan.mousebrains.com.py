@@ -41,9 +41,11 @@ import urllib.parse
 import uuid
 
 def curlGET(curl:str, url:str, cookieJar:str=None,
-            verbose:bool=False) -> subprocess.CompletedProcess:
+            verbose:bool=False, follow:bool=False) -> subprocess.CompletedProcess:
     """GET a URL with curl, optionally saving cookies."""
     cmd = [curl, "-sk", url]
+    if follow:
+        cmd.append("-L")
     if verbose:
         cmd.append("-v")
     if cookieJar:
@@ -110,7 +112,8 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "appData": app_data,
         })
         auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
-        curlGET(curl, auth_url, cookieJar=cookieJar, verbose=verbose)
+        curlGET(curl, auth_url, cookieJar=cookieJar, verbose=verbose,
+                follow=True)
 
         # Log cookie jar contents for diagnostics
         if os.path.isfile(cookieJar):

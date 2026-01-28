@@ -40,25 +40,34 @@ import tempfile
 import urllib.parse
 import uuid
 
-def curlGET(curl:str, url:str, cookieJar:str=None) -> subprocess.CompletedProcess:
+def curlGET(curl:str, url:str, cookieJar:str=None,
+            verbose:bool=False) -> subprocess.CompletedProcess:
     """GET a URL with curl, optionally saving cookies."""
     cmd = [curl, "-sk", url]
+    if verbose:
+        cmd.append("-v")
     if cookieJar:
-        cmd += ["-c", cookieJar]
+        cmd += ["-c", cookieJar, "-b", cookieJar]
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
-    logging.info("GET %s returncode=%s", url, sp.returncode)
+    logging.info("GET %s returncode=%s stdout=%s stderr=%s",
+                 url, sp.returncode,
+                 sp.stdout.decode(errors="replace"),
+                 sp.stderr.decode(errors="replace"))
     return sp
 
 def curlPOST(curl:str, url:str, data:str, contentType:str="application/json",
-             cookieJar:str=None, bearer:str=None) -> subprocess.CompletedProcess:
+             cookieJar:str=None, bearer:str=None,
+             verbose:bool=False) -> subprocess.CompletedProcess:
     """POST data with curl, optionally sending cookies or bearer token."""
     cmd = [curl, "-sk", "-X", "POST", url,
            "-H", f"Content-Type: {contentType}",
            "-H", "X-Client-Info: HP-Web-Client",
            "-H", f"Origin: https://{urllib.parse.urlparse(url).hostname}",
            "-d", data]
+    if verbose:
+        cmd.append("-v")
     if cookieJar:
-        cmd += ["-b", cookieJar]
+        cmd += ["-c", cookieJar, "-b", cookieJar]
     if bearer:
         cmd += ["-H", f"Authorization: Bearer {bearer}"]
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -70,7 +79,8 @@ def curlPOST(curl:str, url:str, data:str, contentType:str="application/json",
         raise RuntimeError(f"curl POST {url} failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
     return sp
 
-def authenticate(curl:str, hostname:str, username:str, password:str) -> str:
+def authenticate(curl:str, hostname:str, username:str, password:str,
+                 verbose:bool=False) -> str:
     """Authenticate to the printer's CDM OAuth2 API and return a
     bearer token.  Three-step flow using curl:
       1) GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
@@ -100,7 +110,12 @@ def authenticate(curl:str, hostname:str, username:str, password:str) -> str:
             "appData": app_data,
         })
         auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
-        curlGET(curl, auth_url, cookieJar=cookieJar)
+        curlGET(curl, auth_url, cookieJar=cookieJar, verbose=verbose)
+
+        # Log cookie jar contents for diagnostics
+        if os.path.isfile(cookieJar):
+            with open(cookieJar) as f:
+                logging.info("Cookie jar after step 1:\n%s", f.read())
 
         # Step 2: POST credentials to the authenticate endpoint
         payload = json.dumps({
@@ -115,7 +130,7 @@ def authenticate(curl:str, hostname:str, username:str, password:str) -> str:
         })
         sp2 = curlPOST(curl,
                         f"https://{hostname}/cdm/security/v1/authenticate",
-                        payload, cookieJar=cookieJar)
+                        payload, cookieJar=cookieJar, verbose=verbose)
         result2 = json.loads(sp2.stdout)
         logging.info("AUTH step 2: %s", result2)
 
@@ -146,7 +161,8 @@ def authenticate(curl:str, hostname:str, username:str, password:str) -> str:
         sp3 = curlPOST(curl,
                         f"https://{hostname}/cdm/oauth2/v1/token",
                         token_data,
-                        contentType="application/x-www-form-urlencoded")
+                        contentType="application/x-www-form-urlencoded",
+                        verbose=verbose)
         result3 = json.loads(sp3.stdout)
         logging.info("AUTH step 3: token_type=%s expires_in=%s",
                      result3.get("token_type"), result3.get("expires_in"))
@@ -257,7 +273,8 @@ def main():
             pfxData = base64.b64encode(fp.read()).decode("ascii")
 
         # Authenticate to get a bearer token
-        token = authenticate(args.curl, hostname, args.adminUser, adminPassword)
+        token = authenticate(args.curl, hostname, args.adminUser, adminPassword,
+                             verbose=args.verbose)
 
         # Upload the certificate
         uploadPayload = json.dumps({

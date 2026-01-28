@@ -50,12 +50,20 @@ def mkSSLContext() -> ssl.SSLContext:
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Return 3xx responses directly instead of following redirects."""
+    def http_error_302(self, req, fp, code, msg, hdrs):
+        return fp
+    http_error_301 = http_error_303 = http_error_307 = http_error_302
+
 def mkOpener(ctx:ssl.SSLContext) -> urllib.request.OpenerDirector:
-    """Create a URL opener with a cookie jar and SSL context."""
+    """Create a URL opener with a cookie jar, SSL context, and no
+    automatic redirect following."""
     jar = http.cookiejar.CookieJar()
     return urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(jar),
         urllib.request.HTTPSHandler(context=ctx),
+        _NoRedirectHandler(),
     )
 
 def postJSON(opener:urllib.request.OpenerDirector, url:str,
@@ -116,16 +124,7 @@ def authenticate(opener:urllib.request.OpenerDirector,
     _common_headers(req1)
     resp1 = opener.open(req1, timeout=180)
     resp1.read()  # consume body
-    logging.info("AUTH step 1: status=%s url=%s", resp1.status, resp1.url)
-
-    # Fetch deviceAdminConfig (the login page does this before authenticating)
-    for cfg_path in ("/cdm/security/v1/deviceAdminConfig",
-                     "/cdm/security/v1/deviceAdminConfig/constraints"):
-        cfg_req = urllib.request.Request(f"https://{hostname}{cfg_path}")
-        cfg_req.add_header("Accept", "application/json, text/plain, */*")
-        _common_headers(cfg_req)
-        cfg_resp = opener.open(cfg_req, timeout=180)
-        cfg_resp.read()
+    logging.info("AUTH step 1: status=%s", resp1.status)
 
     # Step 2: POST credentials to the authenticate endpoint
     url = f"https://{hostname}/cdm/security/v1/authenticate"

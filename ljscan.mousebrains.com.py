@@ -86,12 +86,13 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
     """Authenticate to the printer's CDM OAuth2 API and return a
     bearer token.  Three-step flow using curl:
       1) GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
+         + intermediate GETs that the login-page Angular app makes
       2) POST /cdm/security/v1/authenticate  -> get authorization code
       3) POST /cdm/oauth2/v1/token           -> exchange code for token
 
-    Steps 1 and 2 use a single curl invocation (--next) so the HTTP
-    keep-alive connection is reused.  The printer has no session cookies;
-    it appears to track the OAuth2 session by the TLS/TCP connection.
+    All requests in steps 1-2 use a single curl invocation (--next) so
+    the HTTP keep-alive connection is reused and the server can track
+    the session across requests.
     """
     state = secrets.token_urlsafe(48)
     client_id = "com.hp.cdm.client.hpEws"
@@ -103,10 +104,21 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
     ).decode()
     redirect_uri = f"https://{hostname}/index.html"
 
+    # API calls the login-page Angular app makes before authenticating.
+    # The printer may require these to arm the OAuth2 session.
+    pre_auth_paths = [
+        "/cdm/system/v1/configuration",
+        "/cdm/security/v1/deviceAdminConfig",
+        "/cdm/ews/v1/configuration",
+        "/cdm/security/v1/deviceAdminConfig/constraints",
+        "/cdm/ews/v1/configuration/constraints",
+        "/cdm/remoteAuthentication/v1/capabilities",
+    ]
+
     fd, cookieJar = tempfile.mkstemp(suffix=".cookies")
     os.close(fd)
     try:
-        # Build authorize URL (step 1)
+        # Build authorize URL
         auth_params = urllib.parse.urlencode({
             "response_type": "code",
             "client_id": client_id,
@@ -117,7 +129,7 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
         })
         auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
 
-        # Build authenticate payload (step 2)
+        # Build authenticate payload
         payload = json.dumps({
             "agentId": str(uuid.uuid4()),
             "username": username,
@@ -128,16 +140,25 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "state": state,
             "grant_type": "authorization_code",
         })
-        auth_post_url = f"https://{hostname}/cdm/security/v1/authenticate"
 
-        # Single curl invocation: GET authorize (follow redirect) --next POST authenticate
-        # This keeps the same TCP/TLS connection via HTTP keep-alive.
+        # Build a single curl command with --next sections:
+        #   1. GET authorize (follow redirect to login page)
+        #   2. GET each pre-auth API endpoint
+        #   3. POST authenticate
+        # All share the same TCP/TLS connection via HTTP keep-alive.
         cmd = [curl, "-sk", "-L",
                "-c", cookieJar, "-b", cookieJar,
                "-o", "/dev/null",
                auth_url]
         if verbose:
             cmd.insert(1, "-v")
+
+        for path in pre_auth_paths:
+            cmd += ["--next", "-sk",
+                    "-c", cookieJar, "-b", cookieJar,
+                    "-o", "/dev/null",
+                    f"https://{hostname}{path}"]
+
         cmd += ["--next", "-sk",
                 "-X", "POST",
                 "-c", cookieJar, "-b", cookieJar,
@@ -145,12 +166,16 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
                 "-H", "X-Client-Info: HP-Web-Client",
                 "-H", f"Origin: https://{hostname}",
                 "-d", payload,
-                auth_post_url]
+                f"https://{hostname}/cdm/security/v1/authenticate"]
         if verbose:
-            # -v must appear in each --next section
-            cmd.insert(cmd.index("--next") + 2, "-v")
+            # Add -v to the POST section (last --next)
+            last_next = len(cmd) - 1
+            while cmd[last_next] != "--next":
+                last_next -= 1
+            cmd.insert(last_next + 2, "-v")
 
-        logging.info("AUTH steps 1+2: running combined curl")
+        logging.info("AUTH steps 1+2: running combined curl "
+                     "(%d pre-auth GETs)", len(pre_auth_paths))
         sp2 = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("AUTH steps 1+2: returncode=%s stdout=%s stderr=%s",
                      sp2.returncode,

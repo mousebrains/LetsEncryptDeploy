@@ -36,6 +36,7 @@ import ssl
 import sys
 import subprocess
 import tempfile
+import urllib.parse
 import urllib.request
 import urllib.error
 import uuid
@@ -78,9 +79,9 @@ def authenticate(hostname:str, username:str, password:str,
         "state": secrets.token_urlsafe(48),
         "username": username,
     }
-    data = json.dumps(payload).encode("utf-8")
+    data = urllib.parse.urlencode(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
 
     response = urllib.request.urlopen(req, context=ctx, timeout=180)
     headers = dict(response.getheaders())

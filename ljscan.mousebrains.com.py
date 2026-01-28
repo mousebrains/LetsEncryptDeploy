@@ -28,6 +28,7 @@ logDir = "/var/log"
 
 from argparse import ArgumentParser
 import base64
+import http.cookiejar
 import json
 import logging
 import os
@@ -49,8 +50,16 @@ def mkSSLContext() -> ssl.SSLContext:
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
-def postJSON(url:str, payload:dict, ctx:ssl.SSLContext,
-             bearer:str=None) -> dict:
+def mkOpener(ctx:ssl.SSLContext) -> urllib.request.OpenerDirector:
+    """Create a URL opener with a cookie jar and SSL context."""
+    jar = http.cookiejar.CookieJar()
+    return urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=ctx),
+    )
+
+def postJSON(opener:urllib.request.OpenerDirector, url:str,
+             payload:dict, bearer:str=None) -> dict:
     """POST a JSON payload and return the parsed JSON response."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
@@ -58,36 +67,57 @@ def postJSON(url:str, payload:dict, ctx:ssl.SSLContext,
     if bearer:
         req.add_header("Authorization", f"Bearer {bearer}")
 
-    response = urllib.request.urlopen(req, context=ctx, timeout=180)
+    response = opener.open(req, timeout=180)
     body = response.read().decode(errors="replace")
     logging.info("POST %s status=%s body=%s", url, response.status, body)
     return json.loads(body) if body.strip() else {}
 
-def authenticate(hostname:str, username:str, password:str,
-                 ctx:ssl.SSLContext) -> str:
+def authenticate(opener:urllib.request.OpenerDirector,
+                 hostname:str, username:str, password:str) -> str:
     """Authenticate to the printer's CDM OAuth2 API and return the
-    bearer token.  The token may appear in the JSON body or in a
-    response header."""
+    bearer token.  Uses a two-step flow: first GET the authorize
+    endpoint to establish a session, then POST credentials to the
+    authenticate endpoint."""
+    state = secrets.token_urlsafe(48)
+    client_id = "com.hp.cdm.client.hpEws"
+    scope = "com.hp.cdm.auth.alias.deviceRole.deviceAdmin"
+
+    # Step 1: GET the authorize endpoint to establish session cookies
+    params = urllib.parse.urlencode({
+        "response_type": "code",
+        "client_id": client_id,
+        "state": state,
+        "redirect_uri": f"https://{hostname}/",
+        "scope": scope,
+    })
+    auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{params}"
+    logging.info("AUTH step 1: GET %s", auth_url)
+    resp1 = opener.open(auth_url, timeout=180)
+    body1 = resp1.read().decode(errors="replace")
+    logging.info("AUTH step 1: status=%s url=%s headers=%s body=%s",
+                 resp1.status, resp1.url, dict(resp1.getheaders()), body1)
+
+    # Step 2: POST credentials to the authenticate endpoint
     url = f"https://{hostname}/cdm/security/v1/authenticate"
     payload = {
         "agentId": str(uuid.uuid4()),
-        "client_id": "com.hp.cdm.client.hpEws",
+        "client_id": client_id,
         "client_secret": "98429f9c-f357-4746-ab0f-eeef094430ce",
         "grant_type": "authorization_code",
         "password": password,
-        "scope": "com.hp.cdm.auth.alias.deviceRole.deviceAdmin",
-        "state": secrets.token_urlsafe(48),
+        "scope": scope,
+        "state": state,
         "username": username,
     }
-    data = urllib.parse.urlencode(payload).encode("utf-8")
+    data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Content-Type", "application/json")
 
-    response = urllib.request.urlopen(req, context=ctx, timeout=180)
-    headers = dict(response.getheaders())
-    body = response.read().decode(errors="replace")
-    logging.info("AUTH %s status=%s headers=%s body=%s",
-                 url, response.status, headers, body)
+    resp2 = opener.open(req, timeout=180)
+    headers = dict(resp2.getheaders())
+    body = resp2.read().decode(errors="replace")
+    logging.info("AUTH step 2: status=%s headers=%s body=%s",
+                 resp2.status, headers, body)
 
     # Try JSON body first
     if body.strip():
@@ -98,7 +128,7 @@ def authenticate(hostname:str, username:str, password:str,
 
     # Check response headers for the token
     for hdr in ("X-Auth-Token", "Authorization"):
-        value = response.getheader(hdr, "")
+        value = resp2.getheader(hdr, "")
         if value:
             # Strip "Bearer " prefix if present
             if value.lower().startswith("bearer "):
@@ -107,9 +137,10 @@ def authenticate(hostname:str, username:str, password:str,
 
     raise RuntimeError(
         f"Authentication failed, no bearer token found in body or headers.\n"
-        f"  status={response.status}\n"
-        f"  headers={headers}\n"
-        f"  body={body!r}"
+        f"  step 1 status={resp1.status}\n"
+        f"  step 2 status={resp2.status}\n"
+        f"  step 2 headers={headers}\n"
+        f"  step 2 body={body!r}"
     )
 
 def main():
@@ -205,9 +236,10 @@ def main():
             pfxData = base64.b64encode(fp.read()).decode("ascii")
 
         ctx = mkSSLContext()
+        opener = mkOpener(ctx)
 
         # Authenticate to get a bearer token
-        token = authenticate(hostname, args.adminUser, adminPassword, ctx)
+        token = authenticate(opener, hostname, args.adminUser, adminPassword)
 
         # Upload the certificate
         url = f"https://{hostname}{args.uploadPath}"
@@ -219,7 +251,7 @@ def main():
             "requestType": "importId",
             "version": "1.1.0",
         }
-        postJSON(url, payload, ctx, bearer=token)
+        postJSON(opener, url, payload, bearer=token)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except (FileNotFoundError, RuntimeError) as e:

@@ -141,10 +141,20 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "grant_type": "authorization_code",
         })
 
+        # The login page URL the authorize endpoint redirects to.
+        # The browser sets this as Referer on all subsequent requests.
+        login_params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "state": state,
+            "appData": app_data,
+        })
+        login_referer = (f"https://{hostname}/device/security/login/"
+                         f"?{login_params}")
+
         # Build a single curl command with --next sections:
         #   1. GET authorize (follow redirect to login page)
-        #   2. GET each pre-auth API endpoint
-        #   3. POST authenticate
+        #   2. GET each pre-auth API endpoint (with Referer)
+        #   3. POST authenticate (with Referer + Origin)
         # All share the same TCP/TLS connection via HTTP keep-alive.
         cmd = [curl, "-sk", "-L",
                "-c", cookieJar, "-b", cookieJar,
@@ -156,6 +166,7 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
         for path in pre_auth_paths:
             cmd += ["--next", "-sk",
                     "-c", cookieJar, "-b", cookieJar,
+                    "-H", f"Referer: {login_referer}",
                     "-o", "/dev/null",
                     f"https://{hostname}{path}"]
 
@@ -165,6 +176,9 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
                 "-H", "Content-Type: application/json",
                 "-H", "X-Client-Info: HP-Web-Client",
                 "-H", f"Origin: https://{hostname}",
+                "-H", f"Referer: {login_referer}",
+                "-H", "Accept: application/json, text/plain, */*",
+                "-H", "Accept-Language: en",
                 "-d", payload,
                 f"https://{hostname}/cdm/security/v1/authenticate"]
         if verbose:

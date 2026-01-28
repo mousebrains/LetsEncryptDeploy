@@ -129,7 +129,8 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
         })
         auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
 
-        # Build authenticate payload
+        # Build authenticate payload using compact JSON (no spaces)
+        # to match the browser's Angular app format.
         payload = json.dumps({
             "agentId": str(uuid.uuid4()),
             "username": username,
@@ -139,17 +140,17 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "scope": scope,
             "state": state,
             "grant_type": "authorization_code",
-        })
+        }, separators=(",", ":"))
 
-        # The login page URL the authorize endpoint redirects to.
-        # The browser sets this as Referer on all subsequent requests.
-        login_params = urllib.parse.urlencode({
+        # The Angular login app rewrites the URL to the root path
+        # via history.replaceState, so the browser's Referer uses "/"
+        # rather than "/device/security/login/".
+        referer_params = urllib.parse.urlencode({
             "client_id": client_id,
             "state": state,
             "appData": app_data,
         })
-        login_referer = (f"https://{hostname}/device/security/login/"
-                         f"?{login_params}")
+        referer = f"https://{hostname}/?{referer_params}"
 
         # Build a single curl command with --next sections:
         #   1. GET authorize (follow redirect to login page)
@@ -166,7 +167,7 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
         for path in pre_auth_paths:
             cmd += ["--next", "-sk",
                     "-c", cookieJar, "-b", cookieJar,
-                    "-H", f"Referer: {login_referer}",
+                    "-H", f"Referer: {referer}",
                     "-o", "/dev/null",
                     f"https://{hostname}{path}"]
 
@@ -176,9 +177,13 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
                 "-H", "Content-Type: application/json",
                 "-H", "X-Client-Info: HP-Web-Client",
                 "-H", f"Origin: https://{hostname}",
-                "-H", f"Referer: {login_referer}",
+                "-H", f"Referer: {referer}",
                 "-H", "Accept: application/json, text/plain, */*",
                 "-H", "Accept-Language: en",
+                "-H", "Cache-Control: no-cache",
+                "-H", "Sec-Fetch-Dest: empty",
+                "-H", "Sec-Fetch-Mode: cors",
+                "-H", "Sec-Fetch-Site: same-origin",
                 "-d", payload,
                 f"https://{hostname}/cdm/security/v1/authenticate"]
         if verbose:

@@ -64,6 +64,8 @@ def postJSON(opener:urllib.request.OpenerDirector, url:str,
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json, text/plain, */*")
+    req.add_header("X-Client-Info", "HP-Web-Client")
     if bearer:
         req.add_header("Authorization", f"Bearer {bearer}")
 
@@ -90,6 +92,13 @@ def authenticate(opener:urllib.request.OpenerDirector,
     ).decode()
     origin = f"https://{hostname}"
     redirect_uri = f"https://{hostname}/index.html"
+    user_agent = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+
+    def _common_headers(req):
+        req.add_header("User-Agent", user_agent)
+        req.add_header("X-Client-Info", "HP-Web-Client")
+        return req
 
     # Step 1: GET the authorize endpoint to create the OAuth2 session
     auth_params = urllib.parse.urlencode({
@@ -104,9 +113,19 @@ def authenticate(opener:urllib.request.OpenerDirector,
     logging.info("AUTH step 1: GET %s", auth_url)
     req1 = urllib.request.Request(auth_url)
     req1.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    _common_headers(req1)
     resp1 = opener.open(req1, timeout=180)
     resp1.read()  # consume body
     logging.info("AUTH step 1: status=%s url=%s", resp1.status, resp1.url)
+
+    # Fetch deviceAdminConfig (the login page does this before authenticating)
+    for cfg_path in ("/cdm/security/v1/deviceAdminConfig",
+                     "/cdm/security/v1/deviceAdminConfig/constraints"):
+        cfg_req = urllib.request.Request(f"https://{hostname}{cfg_path}")
+        cfg_req.add_header("Accept", "application/json, text/plain, */*")
+        _common_headers(cfg_req)
+        cfg_resp = opener.open(cfg_req, timeout=180)
+        cfg_resp.read()
 
     # Step 2: POST credentials to the authenticate endpoint
     url = f"https://{hostname}/cdm/security/v1/authenticate"
@@ -126,7 +145,7 @@ def authenticate(opener:urllib.request.OpenerDirector,
     req2.add_header("Accept", "application/json, text/plain, */*")
     req2.add_header("Accept-Language", "en")
     req2.add_header("Origin", origin)
-    req2.add_header("X-Client-Info", "HP-Web-Client")
+    _common_headers(req2)
 
     resp2 = opener.open(req2, timeout=180)
     body2 = resp2.read().decode(errors="replace")
@@ -165,7 +184,7 @@ def authenticate(opener:urllib.request.OpenerDirector,
     req3.add_header("Content-Type", "application/x-www-form-urlencoded")
     req3.add_header("Accept", "application/json, text/plain, */*")
     req3.add_header("Origin", origin)
-    req3.add_header("X-Client-Info", "HP-Web-Client")
+    _common_headers(req3)
 
     resp3 = opener.open(req3, timeout=180)
     body3 = resp3.read().decode(errors="replace")

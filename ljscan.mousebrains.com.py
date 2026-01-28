@@ -88,6 +88,10 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
       1) GET  /cdm/oauth2/v1/authorize      -> create OAuth2 session
       2) POST /cdm/security/v1/authenticate  -> get authorization code
       3) POST /cdm/oauth2/v1/token           -> exchange code for token
+
+    Steps 1 and 2 use a single curl invocation (--next) so the HTTP
+    keep-alive connection is reused.  The printer has no session cookies;
+    it appears to track the OAuth2 session by the TLS/TCP connection.
     """
     state = secrets.token_urlsafe(48)
     client_id = "com.hp.cdm.client.hpEws"
@@ -102,7 +106,7 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
     fd, cookieJar = tempfile.mkstemp(suffix=".cookies")
     os.close(fd)
     try:
-        # Step 1: GET the authorize endpoint to create the OAuth2 session
+        # Build authorize URL (step 1)
         auth_params = urllib.parse.urlencode({
             "response_type": "code",
             "client_id": client_id,
@@ -112,15 +116,8 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "appData": app_data,
         })
         auth_url = f"https://{hostname}/cdm/oauth2/v1/authorize?{auth_params}"
-        curlGET(curl, auth_url, cookieJar=cookieJar, verbose=verbose,
-                follow=True)
 
-        # Log cookie jar contents for diagnostics
-        if os.path.isfile(cookieJar):
-            with open(cookieJar) as f:
-                logging.info("Cookie jar after step 1:\n%s", f.read())
-
-        # Step 2: POST credentials to the authenticate endpoint
+        # Build authenticate payload (step 2)
         payload = json.dumps({
             "agentId": str(uuid.uuid4()),
             "username": username,
@@ -131,9 +128,39 @@ def authenticate(curl:str, hostname:str, username:str, password:str,
             "state": state,
             "grant_type": "authorization_code",
         })
-        sp2 = curlPOST(curl,
-                        f"https://{hostname}/cdm/security/v1/authenticate",
-                        payload, cookieJar=cookieJar, verbose=verbose)
+        auth_post_url = f"https://{hostname}/cdm/security/v1/authenticate"
+
+        # Single curl invocation: GET authorize (follow redirect) --next POST authenticate
+        # This keeps the same TCP/TLS connection via HTTP keep-alive.
+        cmd = [curl, "-sk", "-L",
+               "-c", cookieJar, "-b", cookieJar,
+               "-o", "/dev/null",
+               auth_url]
+        if verbose:
+            cmd.insert(1, "-v")
+        cmd += ["--next", "-sk",
+                "-X", "POST",
+                "-c", cookieJar, "-b", cookieJar,
+                "-H", "Content-Type: application/json",
+                "-H", "X-Client-Info: HP-Web-Client",
+                "-H", f"Origin: https://{hostname}",
+                "-d", payload,
+                auth_post_url]
+        if verbose:
+            # -v must appear in each --next section
+            cmd.insert(cmd.index("--next") + 2, "-v")
+
+        logging.info("AUTH steps 1+2: running combined curl")
+        sp2 = subprocess.run(cmd, capture_output=True, timeout=180)
+        logging.info("AUTH steps 1+2: returncode=%s stdout=%s stderr=%s",
+                     sp2.returncode,
+                     sp2.stdout.decode(errors="replace"),
+                     sp2.stderr.decode(errors="replace"))
+        if sp2.returncode != 0:
+            raise RuntimeError(
+                f"curl authenticate failed rc={sp2.returncode}: "
+                f"{sp2.stderr.decode(errors='replace')}")
+
         result2 = json.loads(sp2.stdout)
         logging.info("AUTH step 2: %s", result2)
 

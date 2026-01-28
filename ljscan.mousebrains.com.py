@@ -6,6 +6,10 @@
 # The certificate must use an RSA key. ECC keys are not supported
 # by HP LaserJet printers.
 #
+# Authentication uses the printer's CDM OAuth2 API:
+#   POST /cdm/security/v1/authenticate  -> bearer token
+#   POST /cdm/certificate/v1/certificates -> upload PKCS12
+#
 # On your letsencrypt host:
 #  1) Create the certificate with an RSA key:
 #     sudo certbot certonly --key-type rsa -d ljscan.mousebrains.com
@@ -15,9 +19,6 @@
 #  3) Install this script:
 #     sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
 #     sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/ljscan.mousebrains.com.py
-#
-# The script converts the PEM cert+key to PKCS12 format, base64-encodes it,
-# and POSTs it as JSON to the printer's CDM certificate API.
 #
 # The name of the script should be the FQDN of the printer (with .py extension)
 #
@@ -37,6 +38,78 @@ import subprocess
 import tempfile
 import urllib.request
 import urllib.error
+import uuid
+
+def mkSSLContext() -> ssl.SSLContext:
+    """Create an SSL context that skips verification (printer may have
+    an expired or self-signed certificate)."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+def postJSON(url:str, payload:dict, ctx:ssl.SSLContext,
+             bearer:str=None) -> dict:
+    """POST a JSON payload and return the parsed JSON response."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if bearer:
+        req.add_header("Authorization", f"Bearer {bearer}")
+
+    response = urllib.request.urlopen(req, context=ctx, timeout=180)
+    body = response.read().decode(errors="replace")
+    logging.info("POST %s status=%s body=%s", url, response.status, body)
+    return json.loads(body) if body.strip() else {}
+
+def authenticate(hostname:str, username:str, password:str,
+                 ctx:ssl.SSLContext) -> str:
+    """Authenticate to the printer's CDM OAuth2 API and return the
+    bearer token.  The token may appear in the JSON body or in a
+    response header."""
+    url = f"https://{hostname}/cdm/security/v1/authenticate"
+    payload = {
+        "agentId": str(uuid.uuid4()),
+        "client_id": "com.hp.cdm.client.hpEws",
+        "client_secret": "98429f9c-f357-4746-ab0f-eeef094430ce",
+        "grant_type": "authorization_code",
+        "password": password,
+        "scope": "com.hp.cdm.auth.alias.deviceRole.deviceAdmin",
+        "state": secrets.token_urlsafe(48),
+        "username": username,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+
+    response = urllib.request.urlopen(req, context=ctx, timeout=180)
+    headers = dict(response.getheaders())
+    body = response.read().decode(errors="replace")
+    logging.info("AUTH %s status=%s headers=%s body=%s",
+                 url, response.status, headers, body)
+
+    # Try JSON body first
+    if body.strip():
+        result = json.loads(body)
+        token = result.get("access_token")
+        if token:
+            return token
+
+    # Check response headers for the token
+    for hdr in ("X-Auth-Token", "Authorization"):
+        value = response.getheader(hdr, "")
+        if value:
+            # Strip "Bearer " prefix if present
+            if value.lower().startswith("bearer "):
+                return value[7:]
+            return value
+
+    raise RuntimeError(
+        f"Authentication failed, no bearer token found in body or headers.\n"
+        f"  status={response.status}\n"
+        f"  headers={headers}\n"
+        f"  body={body!r}"
+    )
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name
@@ -54,6 +127,8 @@ def main():
     parser.add_argument("--adminPasswordFile", type=str,
                         default="/etc/letsencrypt/ljscan.admin.password",
                         help="File containing the printer's EWS admin password")
+    parser.add_argument("--adminUser", type=str, default="admin",
+                        help="EWS admin username")
     parser.add_argument("--uploadPath", type=str,
                         default="/cdm/certificate/v1/certificates",
                         help="EWS certificate API path")
@@ -128,36 +203,22 @@ def main():
         with open(pfxPath, "rb") as fp:
             pfxData = base64.b64encode(fp.read()).decode("ascii")
 
-        # Build the JSON payload for the CDM certificate API
-        payload = json.dumps({
+        ctx = mkSSLContext()
+
+        # Authenticate to get a bearer token
+        token = authenticate(hostname, args.adminUser, adminPassword, ctx)
+
+        # Upload the certificate
+        url = f"https://{hostname}{args.uploadPath}"
+        payload = {
             "certificateData": pfxData,
             "certificateFormat": "pkcs12",
             "password": pfxPassword,
             "privateKeyExportable": False,
             "requestType": "importId",
             "version": "1.1.0",
-        }).encode("utf-8")
-
-        # POST to the printer's certificate API
-        url = f"https://{hostname}{args.uploadPath}"
-        req = urllib.request.Request(url, data=payload, method="POST")
-        req.add_header("Content-Type", "application/json")
-
-        # HTTP Basic Auth
-        credentials = base64.b64encode(
-                f"admin:{adminPassword}".encode()
-                ).decode("ascii")
-        req.add_header("Authorization", f"Basic {credentials}")
-
-        # Skip TLS verification (printer may have expired/self-signed cert)
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        response = urllib.request.urlopen(req, context=ctx, timeout=180)
-        status = response.status
-        body = response.read().decode(errors="replace")
-        logging.info("POST %s status=%s body=%s", url, status, body)
+        }
+        postJSON(url, payload, ctx, bearer=token)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except (FileNotFoundError, RuntimeError) as e:

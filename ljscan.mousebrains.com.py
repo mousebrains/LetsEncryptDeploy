@@ -16,10 +16,8 @@
 #     sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
 #     sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/ljscan.mousebrains.com.py
 #
-# The script converts the PEM cert+key to PKCS12 format and uploads it
-# to the printer's EWS via HTTPS. The EWS endpoint used is for newer
-# HP FutureSmart printers. If your printer uses a different endpoint,
-# override with --uploadPath.
+# The script converts the PEM cert+key to PKCS12 format, base64-encodes it,
+# and POSTs it as JSON to the printer's CDM certificate API.
 #
 # The name of the script should be the FQDN of the printer (with .py extension)
 #
@@ -28,12 +26,17 @@
 logDir = "/var/log"
 
 from argparse import ArgumentParser
+import base64
+import json
 import logging
 import os
 import secrets
+import ssl
 import sys
 import subprocess
 import tempfile
+import urllib.request
+import urllib.error
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name
@@ -52,12 +55,10 @@ def main():
                         default="/etc/letsencrypt/hp-admin-password",
                         help="File containing the printer's EWS admin password")
     parser.add_argument("--uploadPath", type=str,
-                        default="/Security/DeviceCertificates/NewCertWithPassword/Upload",
-                        help="EWS upload URL path")
+                        default="/cdm/certificate/v1/certificates",
+                        help="EWS certificate API path")
     parser.add_argument("--openssl", type=str, default="/usr/bin/openssl",
                         help="OpenSSL command to use")
-    parser.add_argument("--curl", type=str, default="/usr/bin/curl",
-                        help="curl command to use")
     args = parser.parse_args()
 
     logfilename = None
@@ -123,31 +124,48 @@ def main():
         if sp.returncode != 0:
             raise RuntimeError(f"openssl pkcs12 failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
-        # Upload PKCS12 to the printer's EWS
+        # Read and base64-encode the PKCS12 file
+        with open(pfxPath, "rb") as fp:
+            pfxData = base64.b64encode(fp.read()).decode("ascii")
+
+        # Build the JSON payload for the CDM certificate API
+        payload = json.dumps({
+            "certificateData": pfxData,
+            "certificateFormat": "pkcs12",
+            "password": pfxPassword,
+            "privateKeyExportable": False,
+            "requestType": "importId",
+            "version": "1.1.0",
+        }).encode("utf-8")
+
+        # POST to the printer's certificate API
         url = f"https://{hostname}{args.uploadPath}"
-        cmd = (
-                args.curl,
-                "--insecure",
-                "--silent", "--show-error",
-                "--write-out", "%{http_code}",
-                "-u", f"admin:{adminPassword}",
-                "--form", f"certificate=@{pfxPath}",
-                "--form", f"password={pfxPassword}",
-                url,
-                )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
-        httpCode = sp.stdout.decode(errors="replace").strip()
-        logging.info("curl returncode=%s http_code=%s stderr=%s",
-                     sp.returncode, httpCode,
-                     sp.stderr.decode(errors="replace"))
-        if sp.returncode != 0:
-            raise RuntimeError(f"curl failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
-        if not httpCode.startswith("2"):
-            raise RuntimeError(f"EWS upload returned HTTP {httpCode}")
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+
+        # HTTP Basic Auth
+        credentials = base64.b64encode(
+                f"admin:{adminPassword}".encode()
+                ).decode("ascii")
+        req.add_header("Authorization", f"Basic {credentials}")
+
+        # Skip TLS verification (printer may have expired/self-signed cert)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        response = urllib.request.urlopen(req, context=ctx, timeout=180)
+        status = response.status
+        body = response.read().decode(errors="replace")
+        logging.info("POST %s status=%s body=%s", url, status, body)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except (FileNotFoundError, RuntimeError) as e:
         logging.error("%s", e)
+        sys.exit(1)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace") if e.fp else ""
+        logging.error("HTTP %s %s: %s", e.code, e.reason, body)
         sys.exit(1)
     except Exception:
         logging.exception("GotMe")

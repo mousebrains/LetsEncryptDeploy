@@ -10,7 +10,7 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 
 - `ucg.mousebrains.com.py` - Certbot deploy hook for UniFi Cloud Gateway (Python)
 - `uisp.mousebrains.com.py` - Certbot deploy hook for UISP (Python, uses paramiko + cryptography)
-- `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + curl)
+- `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + urllib)
 - `README.uisp` - UISP-specific setup notes
 
 ## Languages and Tools
@@ -18,7 +18,7 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 - **Python 3.10+** for certbot deploy hooks (`*.py`)
 - **certbot** for Let's Encrypt certificate management
 - **SSH/SCP** for remote certificate deployment
-- **openssl** and **curl** for PKCS12 conversion and HTTPS upload (HP printer)
+- **openssl** for PKCS12 conversion (HP printer); HTTPS upload uses Python stdlib (`urllib`)
 - No package manager or build system; scripts are standalone
 
 ## Common Commands

@@ -1,0 +1,23 @@
+# Create a /etc/certificates directory tree
+
+sudo mkdir -p /etc/certificates/uisp.mousebrains.com
+
+# Make it world writeable
+
+sudo chmod 777 /etc/certificates/uisp.mousebrains.com
+
+# Copy in the /etc/letsencrypt/archive/uisp.mousebrains.com files fullchain1.pem and privkey1.pem
+# to /etc/certificates/uisp.mousebrains.com
+# and create symbolic links to them, 
+#  fullchain?.pem -> cert.pem
+#  privkey??.pem -> key.pem
+
+# Install UISP with my SSL certs
+		# --subnet 172.18.6.0/24 \
+		# --subnet 172.21.195.0/24 \
+
+curl -fsSL https://uisp.ui.com/install > /tmp/uisp_inst.sh && \
+	sudo bash /tmp/uisp_inst.sh \
+		--ssl-cert-dir /etc/certificates/uisp.mousebrains.com \
+		--ssl-cert fullchain.pem \
+		--ssl-cert-key privkey.pem

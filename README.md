@@ -1,5 +1,11 @@
 # LetsEncryptDeploy
 
+![CI](https://github.com/mousebrains/LetsEncryptDeploy/actions/workflows/ci.yml/badge.svg)
+![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)
+![License: GPLv3](https://img.shields.io/badge/license-GPLv3-green)
+![Linting: ruff](https://img.shields.io/badge/linting-ruff-orange)
+![Type checking: mypy](https://img.shields.io/badge/types-mypy--strict-blue)
+
 Certbot deploy hooks for automatically deploying renewed Let's Encrypt certificates to network devices.
 
 ## Scripts
@@ -71,6 +77,60 @@ python3 ljscan.mousebrains.com.py --help
 ## Logging
 
 By default, scripts log to `/var/log/<fqdn>.log`. Pass `--logfile ""` to log to stderr instead. Use `--verbose` for debug-level output.
+
+## Troubleshooting
+
+### Hook runs but certificate doesn't change on the device
+
+Check the log file for errors:
+
+```bash
+sudo cat /var/log/ucg.mousebrains.com.log
+```
+
+Run the hook manually with `--verbose` for debug output:
+
+```bash
+sudo python3 test.py ucg.mousebrains.com --verbose
+```
+
+### "Permission denied" or SSH connection failures
+
+Ensure the SSH key is installed for root and the target host is in `/root/.ssh/config`:
+
+```bash
+sudo ssh -i /root/.ssh/id_rsa user@device hostname
+```
+
+If this fails, re-copy the key:
+
+```bash
+sudo ssh-copy-id -i /root/.ssh/id_rsa user@device
+```
+
+### "RENEWED_DOMAINS" or "RENEWED_LINEAGE" KeyError
+
+The hook is being run outside of certbot. Use `test.py` to set the required environment variables automatically, or run via certbot with `--force-renewal`.
+
+### HP printer rejects the certificate
+
+- HP printers require RSA keys. If your certificate uses ECC, re-create it with `--key-type rsa`.
+- Verify the credentials file exists and has correct permissions (`chmod 600`).
+- Some HP firmware versions are picky about User-Agent strings; the ljscan hook handles this automatically.
+
+### Timeout errors
+
+The default subprocess timeout is 180 seconds (600 seconds for UISP restarts). If your device or network is slow, you may see `TimeoutExpired` errors in the log. For UISP, increase the timeout with `--reloadTimeout`.
+
+### Verifying the deployed certificate
+
+After deployment, confirm the device is serving the new certificate:
+
+```bash
+echo | openssl s_client -connect <fqdn>:443 2>/dev/null | openssl x509 -noout -issuer -dates
+```
+
+The `notAfter` date should reflect the renewed certificate.
 
 ## Creating a new deploy hook
 

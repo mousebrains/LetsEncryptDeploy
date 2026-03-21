@@ -21,7 +21,7 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 
 ## Languages and Tools
 
-- **Python 3.10+** for certbot deploy hooks (`*.py`)
+- **Python 3.13+** for certbot deploy hooks (`*.py`)
 - **certbot** for Let's Encrypt certificate management
 - **SSH/SCP** for remote certificate deployment (UCG, UISP)
 - **openssl** for PKCS12 conversion (HP printers)

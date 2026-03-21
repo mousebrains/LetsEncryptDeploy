@@ -241,7 +241,7 @@ def main() -> None:
         logging.error("%s", e)
         sys.exit(1)
     except Exception:
-        logging.exception("GotMe")
+        logging.exception("Unexpected error deploying to %s", hostname)
         sys.exit(1)
 
 

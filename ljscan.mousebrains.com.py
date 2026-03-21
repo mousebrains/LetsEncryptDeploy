@@ -56,37 +56,30 @@ def curlPOST(curl, url, dataFile=None, contentType="application/json",
     return sp
 
 
-def authenticate(curl, hostname, username, password, verbose=False):
+def authenticate(curl, hostname, username, password, tmpdir, verbose=False):
     """Authenticate to the printer's CDM OAuth2 API using the password
     grant flow and return a bearer token.
 
     POST /cdm/oauth2/v1/token with grant_type=password
     """
-    client_id = "com.hp.cdm.client.hpEws"
-    scope = "deviceAdmin"
-
     token_data = urllib.parse.urlencode({
         "grant_type": "password",
         "username": username,
         "password": password,
-        "client_id": client_id,
-        "scope": scope,
+        "client_id": "com.hp.cdm.client.hpEws",
+        "scope": "deviceAdmin",
     })
 
     # Write POST body to temp file to avoid credentials on command line
-    fd, dataPath = tempfile.mkstemp(prefix="auth-")
-    try:
-        with os.fdopen(fd, "w") as fp:
-            fp.write(token_data)
+    dataPath = os.path.join(tmpdir, "auth-data")
+    with open(dataPath, "w") as fp:
+        fp.write(token_data)
 
-        logging.info("AUTH: requesting token via password grant")
-        sp = curlPOST(curl, f"https://{hostname}/cdm/oauth2/v1/token",
-                       dataFile=dataPath,
-                       contentType="application/x-www-form-urlencoded",
-                       verbose=verbose)
-    finally:
-        if os.path.isfile(dataPath):
-            os.unlink(dataPath)
+    logging.info("AUTH: requesting token via password grant")
+    sp = curlPOST(curl, f"https://{hostname}/cdm/oauth2/v1/token",
+                   dataFile=dataPath,
+                   contentType="application/x-www-form-urlencoded",
+                   verbose=verbose)
 
     try:
         result = json.loads(sp.stdout)
@@ -144,8 +137,6 @@ def main():
                         level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s: %(message)s")
 
-    pfxPath = None
-    headerPath = None
     try:
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
@@ -178,63 +169,57 @@ def main():
         if not adminPassword:
             raise RuntimeError(f"admin_password not set in {configFile}")
 
-        pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+            pfxPath = os.path.join(tmpdir, "cert.pfx")
 
-        # Create a temp file for the PKCS12 bundle
-        fd, pfxPath = tempfile.mkstemp(suffix=".pfx")
-        os.close(fd)
+            # Convert PEM cert+key to PKCS12 using env var for password
+            env = os.environ.copy()
+            env["PFX_PASSOUT"] = pfxPassword
+            cmd = (args.openssl, "pkcs12", "-export",
+                   "-out", pfxPath,
+                   "-inkey", keyname,
+                   "-in", crtname,
+                   "-passout", "env:PFX_PASSOUT")
+            sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
+            logging.info("openssl returncode=%s stdout=%s stderr=%s",
+                         sp.returncode,
+                         sp.stdout.decode(errors="replace")[:500],
+                         sp.stderr.decode(errors="replace")[:500])
+            if sp.returncode != 0:
+                raise RuntimeError(
+                    f"openssl pkcs12 failed with return code {sp.returncode}: "
+                    f"{sp.stderr.decode(errors='replace')}")
 
-        # Convert PEM cert+key to PKCS12 using env var for password
-        env = os.environ.copy()
-        env["PFX_PASSOUT"] = pfxPassword
-        cmd = (args.openssl, "pkcs12", "-export",
-               "-out", pfxPath,
-               "-inkey", keyname,
-               "-in", crtname,
-               "-passout", "env:PFX_PASSOUT")
-        sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
-        logging.info("openssl returncode=%s stdout=%s stderr=%s",
-                     sp.returncode,
-                     sp.stdout.decode(errors="replace")[:500],
-                     sp.stderr.decode(errors="replace")[:500])
-        if sp.returncode != 0:
-            raise RuntimeError(
-                f"openssl pkcs12 failed with return code {sp.returncode}: "
-                f"{sp.stderr.decode(errors='replace')}")
+            # Read and base64-encode the PKCS12 file
+            with open(pfxPath, "rb") as fp:
+                pfxData = base64.b64encode(fp.read()).decode("ascii")
 
-        # Read and base64-encode the PKCS12 file
-        with open(pfxPath, "rb") as fp:
-            pfxData = base64.b64encode(fp.read()).decode("ascii")
+            # Authenticate to get a bearer token
+            token = authenticate(args.curl, hostname, adminUser, adminPassword,
+                                 tmpdir, verbose=args.verbose)
 
-        # Authenticate to get a bearer token
-        token = authenticate(args.curl, hostname, adminUser, adminPassword,
-                             verbose=args.verbose)
+            # Write bearer token to a temp header file
+            headerPath = os.path.join(tmpdir, "auth-header")
+            with open(headerPath, "w") as fp:
+                fp.write(f"Authorization: Bearer {token}")
 
-        # Write bearer token to a temp header file to avoid it on command line
-        fd, headerPath = tempfile.mkstemp(prefix="header-")
-        with os.fdopen(fd, "w") as fp:
-            fp.write(f"Authorization: Bearer {token}")
+            # Write upload payload to a temp file
+            uploadPath = os.path.join(tmpdir, "upload-data")
+            with open(uploadPath, "w") as fp:
+                json.dump({
+                    "certificateData": pfxData,
+                    "certificateFormat": "pkcs12",
+                    "password": pfxPassword,
+                    "privateKeyExportable": False,
+                    "requestType": "importId",
+                    "version": "1.1.0",
+                }, fp)
 
-        # Upload the certificate payload via temp file
-        uploadPayload = json.dumps({
-            "certificateData": pfxData,
-            "certificateFormat": "pkcs12",
-            "password": pfxPassword,
-            "privateKeyExportable": False,
-            "requestType": "importId",
-            "version": "1.1.0",
-        })
-        fd, uploadPath = tempfile.mkstemp(prefix="upload-")
-        try:
-            with os.fdopen(fd, "w") as fp:
-                fp.write(uploadPayload)
             curlPOST(args.curl,
                       f"https://{hostname}{args.uploadPath}",
                       dataFile=uploadPath,
                       headerFile=headerPath)
-        finally:
-            if os.path.isfile(uploadPath):
-                os.unlink(uploadPath)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:
@@ -246,11 +231,6 @@ def main():
     except Exception:
         logging.exception("GotMe")
         sys.exit(1)
-    finally:
-        if pfxPath and os.path.isfile(pfxPath):
-            os.unlink(pfxPath)
-        if headerPath and os.path.isfile(headerPath):
-            os.unlink(headerPath)
 
 
 if __name__ == "__main__":

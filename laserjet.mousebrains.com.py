@@ -21,8 +21,9 @@ import tempfile
 logDir = "/var/log"
 
 
-def curlPOST(curl, url, data=None, netrc_file=None, verbose=False):
-    """POST data with curl using a netrc file for authentication."""
+def curlPOST(curl, url, netrc_file=None, data=None, extra_args=None,
+             verbose=False):
+    """POST with curl using a netrc file for authentication."""
     cmd = [curl, "-sk", "-X", "POST", url, "-L"]
     if verbose:
         cmd.append("-v")
@@ -30,13 +31,17 @@ def curlPOST(curl, url, data=None, netrc_file=None, verbose=False):
         cmd += ["--netrc-file", netrc_file]
     if data:
         cmd += ["-H", "Content-Type: application/x-www-form-urlencoded", "-d", data]
+    if extra_args:
+        cmd += extra_args
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
     logging.info("POST %s returncode=%s stdout=%s stderr=%s",
                  url, sp.returncode,
                  sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0:
-        raise RuntimeError(f"curl POST {url} failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+        raise RuntimeError(
+            f"curl POST {url} failed with return code {sp.returncode}: "
+            f"{sp.stderr.decode(errors='replace')}")
     return sp
 
 
@@ -59,23 +64,14 @@ def upload_certificate(curl, hostname, pfx_path, pfx_password,
              netrc_file=netrc_file, verbose=verbose)
 
     # Step 3: Upload the PKCS12 file via multipart form
-    # The form has fields: CertFile (the file), CertPwd (password), ImportCert (submit button)
     logging.info("Step 3: Uploading PKCS12 certificate")
-    cmd = [curl, "-sk", "-X", "POST", "-L",
-           f"{base_url}/hp/device/Certificate.pfx",
-           "--netrc-file", netrc_file,
-           "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
-           "-F", f"CertPwd={pfx_password}",
-           "-F", "ImportCert=Import"]
-    if verbose:
-        cmd.insert(1, "-v")
-    sp = subprocess.run(cmd, capture_output=True, timeout=180)
-    logging.info("Upload returncode=%s stdout=%s stderr=%s",
-                 sp.returncode,
-                 sp.stdout.decode(errors="replace")[:500],
-                 sp.stderr.decode(errors="replace")[:500])
-    if sp.returncode != 0:
-        raise RuntimeError(f"Certificate upload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+    curlPOST(curl, f"{base_url}/hp/device/Certificate.pfx",
+             netrc_file=netrc_file, verbose=verbose,
+             extra_args=[
+                 "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
+                 "-F", f"CertPwd={pfx_password}",
+                 "-F", "ImportCert=Import",
+             ])
 
     logging.info("Certificate upload completed")
 
@@ -111,11 +107,8 @@ def main():
 
     logging.basicConfig(filename=logfilename,
                         level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s: %(message)s",
-                        )
+                        format="%(asctime)s %(levelname)s: %(message)s")
 
-    pfxPath = None
-    netrcPath = None
     try:
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
@@ -131,7 +124,6 @@ def main():
 
         crtname = os.path.join(lineage, args.certName)
         keyname = os.path.join(lineage, args.keyName)
-
         configFile = os.path.abspath(os.path.expanduser(args.configFile))
 
         if not os.path.isfile(crtname):
@@ -149,38 +141,36 @@ def main():
         if not adminPassword:
             raise RuntimeError(f"admin_password not set in {configFile}")
 
-        # Create a temporary netrc file for curl authentication
-        fd, netrcPath = tempfile.mkstemp(prefix="netrc-")
-        with os.fdopen(fd, "w") as fp:
-            fp.write(f"machine {hostname} login {adminUser} password {adminPassword}\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create netrc file for curl authentication
+            netrcPath = os.path.join(tmpdir, "netrc")
+            with open(netrcPath, "w") as fp:
+                fp.write(f"machine {hostname} login {adminUser} password {adminPassword}\n")
 
-        pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+            pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+            pfxPath = os.path.join(tmpdir, "cert.pfx")
 
-        # Create a temp file for the PKCS12 bundle
-        fd, pfxPath = tempfile.mkstemp(suffix=".pfx")
-        os.close(fd)
+            # Convert PEM cert+key to PKCS12 using env var for password
+            env = os.environ.copy()
+            env["PFX_PASSOUT"] = pfxPassword
+            cmd = (args.openssl, "pkcs12", "-export",
+                   "-out", pfxPath,
+                   "-inkey", keyname,
+                   "-in", crtname,
+                   "-passout", "env:PFX_PASSOUT")
+            sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
+            logging.info("openssl returncode=%s stdout=%s stderr=%s",
+                         sp.returncode,
+                         sp.stdout.decode(errors="replace")[:500],
+                         sp.stderr.decode(errors="replace")[:500])
+            if sp.returncode != 0:
+                raise RuntimeError(
+                    f"openssl pkcs12 failed with return code {sp.returncode}: "
+                    f"{sp.stderr.decode(errors='replace')}")
 
-        # Convert PEM cert+key to PKCS12 using env var for password
-        env = os.environ.copy()
-        env["PFX_PASSOUT"] = pfxPassword
-        cmd = (
-                args.openssl, "pkcs12", "-export",
-                "-out", pfxPath,
-                "-inkey", keyname,
-                "-in", crtname,
-                "-passout", "env:PFX_PASSOUT",
-                )
-        sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
-        logging.info("openssl returncode=%s stdout=%s stderr=%s",
-                     sp.returncode,
-                     sp.stdout.decode(errors="replace")[:500],
-                     sp.stderr.decode(errors="replace")[:500])
-        if sp.returncode != 0:
-            raise RuntimeError(f"openssl pkcs12 failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
-
-        # Upload the certificate
-        upload_certificate(args.curl, hostname, pfxPath, pfxPassword,
-                           netrcPath, verbose=args.verbose)
+            # Upload the certificate
+            upload_certificate(args.curl, hostname, pfxPath, pfxPassword,
+                               netrcPath, verbose=args.verbose)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:
@@ -192,11 +182,6 @@ def main():
     except Exception:
         logging.exception("GotMe")
         sys.exit(1)
-    finally:
-        if pfxPath and os.path.isfile(pfxPath):
-            os.unlink(pfxPath)
-        if netrcPath and os.path.isfile(netrcPath):
-            os.unlink(netrcPath)
 
 if __name__ == "__main__":
     main()

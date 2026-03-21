@@ -1,116 +1,114 @@
-#! /usr/bin/env python3
+#! /usr/bin/python3
 #
-# UISP.mousebrains.com
+# Certbot deploy hook for UISP (uisp.mousebrains.com)
 #
-# Designed to be run by certbot from /etc/letsencrypt/renwal-hooks/deploy and deploy
-# a newly renewe certificate. It will be run as the root user.
+# Designed to be run by certbot from /etc/letsencrypt/renewal-hooks/deploy
+# to deploy a renewed certificate. It will be run as the root user.
+#
+# SCPs fullchain.pem and privkey.pem to the UISP host's certificate directory,
+# then SSHes in to restart the UISP service so it picks up the new cert.
 #
 # Sep-2025, Pat Welch, pat@mousebrains.com
 
-hostname = "uisp.mousebrains.com" # Target certificate/hostname
-logDir = "~pat/logs" # Where to put log files
-
-crtName = "fullchain.pem" # Which cert file should we use
-keyName = "privkey.pem" # Which key file should we use, None indicates not to copy
-
+logDir = "/var/log"
 
 from argparse import ArgumentParser
-import os
 import logging
+import os
+import subprocess
 import sys
-from cryptography.x509 import load_pem_x509_certificate
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from cryptography.hazmat.primitives.serialization import BestAvailableEncryption
-from cryptography.hazmat.primitives.serialization import pkcs12
-import paramiko # For SSH
 
-def mkPkcs12(fnCrt:str, fnKey:str, name:str, password=str) -> bytes:
-    with open(fnCrt, "rb") as fp:
-        cert = load_pem_x509_certificate(fp.read())
-    with open(fnKey, "rb") as fp:
-        key = load_pem_private_key(
-                fp.read(),
-                password=None, # No password needed for unencrypted keys
-                )
+def main():
+    scriptName = os.path.basename(sys.argv[0]) # This script's name
+    hostname = scriptName.removesuffix(".py")
 
-    p12 = pkcs12.serialize_key_and_certificates(
-            name=name.encode("utf-8"),
-            key=key,
-            cert=cert,
-            cas=None,
-            encryption_algorithm=BestAvailableEncryption(password.encode("utf-8")),
-            )
-    return p12
+    parser = ArgumentParser(f"{scriptName} deployment script")
+    parser.add_argument("--logfile", type=str,
+                        default=os.path.join(logDir, f"{hostname}.log"),
+                        help="Where to log to, empty for stderr")
+    parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
+    parser.add_argument("--certName", type=str, default="fullchain.pem",
+                        help="Which certificate file to use")
+    parser.add_argument("--keyName", type=str, default="privkey.pem",
+                        help="Which key file to use")
+    parser.add_argument("--certDir", type=str,
+                        default="/etc/certificates/uisp.mousebrains.com",
+                        help="Remote directory for certificate files on the UISP host")
+    parser.add_argument("--reload", type=str,
+                        default="app/unms-cli restart",
+                        help="Command to restart UISP on the remote host")
+    parser.add_argument("--ssh", type=str, default="/usr/bin/ssh", help="SSH command to use")
+    parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="SCP command to use")
+    args = parser.parse_args()
 
-def deployIt(fnCrt:str, fnKey:str, hostname:str, args:ArgumentParser) -> None:
-    p12 = mkPkcs12(fnCrt, fnKey, hostname)
+    logfilename = None
+    if args.logfile:
+        logfilename = os.path.abspath(os.path.expanduser(args.logfile))
+        logdirname = os.path.dirname(logfilename)
+        if not os.path.isdir(logdirname):
+            os.makedirs(logdirname, exist_ok=True)
 
-    logging.info("Deploy %s %s", fnCrt, fnKey)
-    logging.info("P12 %s %s", len(p12), type(p12))
+    logging.basicConfig(filename=logfilename,
+                        level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s: %(message)s",
+                        )
+    try:
+        for key in ["DOMAINS", "LINEAGE"]:
+            name = "RENEWED_" + key
+            if name not in os.environ:
+                raise KeyError(f"{name} not in environment")
 
-    with paramiko.SSHClient() as client:
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(hostname=hostname)
-
-
-parser = ArgumentParser(f"{hostname} deployment script")
-parser.add_argument("--logfile", type=str, default=f"{logDir}/{hostname}.log",
-                    help="Where to log to, empty goes to stdout")
-parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
-parser.add_argument("--fqdn", type=str, help="Fully qualified domain name")
-parser.add_argument("--liveDir", type=str, default="/etc/letsencrypt/live", 
-                    help="Where live certificates are stored.")
-parser.add_argument("--certName", type=str, help="Which certificate file to use")
-parser.add_argument("--keyName", type=str, help="Which key file to use")
-parser.add_argument("--ssh", type=str, default="/usr/bin/ssh", help="Which ssh binary to use")
-parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="Which ssh binary to use")
-args = parser.parse_args()
-
-if args.fqdn: hostname = args.fqdn
-
-if args.certName: crtName = args.certName
-if args.keyName: keyName = args.keyName
-
-logfilename = None
-if args.logfile and len(args.logfile):
-    logfilename = os.path.abspath(os.path.expanduser(args.logfile))
-    dirname = os.path.dirname(logfilename)
-    if not os.path.isdir(dirname):
-        os.makedirs(dirname, exist_ok=True)
-
-logging.basicConfig(filename=logfilename, 
-                    level=logging.DEBUG if args.verbose else logging.INFO,
-                    format="%(asctime)s %(levelname)s: %(message)s",
-                    )
-
-try:
-    logging.debug("Args: %s", args)
-
-    if "RENEWED_DOMAINS" in os.environ:
         domains = os.environ["RENEWED_DOMAINS"].split()
+        lineage = os.environ["RENEWED_LINEAGE"]
+
         if hostname not in domains:
-            logging.info("%s is not in RENEWED_DOMAINS, %s", hostname, domains)
+            logging.info("Mismatch: %s not in %s", hostname, domains)
             sys.exit(0)
 
-    if "RENEWED_LINEAGE" in os.environ:
-        liveDir = os.environ["RENEWED_LINEAGE"]
-    else:
-        liveDir = os.path.join(args.liveDir, hostname)
+        crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
+        keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
 
-    if not os.path.isdir(liveDir): 
-        raise FileNotFoundError(f"Live directory '{liveDir}' does not exist")
+        if not os.path.isfile(crtname):
+            raise FileNotFoundError(f"Certificate file not found: {crtname}")
+        if not os.path.isfile(keyname):
+            raise FileNotFoundError(f"Key file not found: {keyname}")
 
-    crtFilename = os.path.join(liveDir, crtName)
-    keyFilename = os.path.join(liveDir, keyName)
+        # SCP cert and key to the UISP host's certificate directory
+        cmd = (
+                args.scp,
+                crtname,
+                keyname,
+                hostname + ":" + args.certDir + "/",
+                )
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        logging.info("SCP returncode=%s stdout=%s stderr=%s",
+                     sp.returncode,
+                     sp.stdout.decode(errors="replace"),
+                     sp.stderr.decode(errors="replace"))
+        if sp.returncode != 0:
+            raise RuntimeError(f"SCP failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
-    if not os.path.isfile(crtFilename): 
-        raise FileNotFound(f"Certificate '{crtFilename}' does not exist")
+        # Restart UISP to pick up the new certificate
+        cmd = (
+                args.ssh,
+                hostname,
+                args.reload,
+                )
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        logging.info("SSH returncode=%s stdout=%s stderr=%s",
+                     sp.returncode,
+                     sp.stdout.decode(errors="replace"),
+                     sp.stderr.decode(errors="replace"))
+        if sp.returncode != 0:
+            raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
-    if keyFilename and not os.path.isfile(keyFilename): 
-        raise FileNotFound(f"Key '{keyFilename}' does not exist")
+        logging.info("Deployment to %s completed successfully", hostname)
+    except (FileNotFoundError, RuntimeError) as e:
+        logging.error("%s", e)
+        sys.exit(1)
+    except Exception:
+        logging.exception("GotMe")
+        sys.exit(1)
 
-    deployIt(crtFilename, keyFilename, hostname, args)
-except SystemExit as e:
-    pass
-except:
-    logging.exception("Args:%s\nEnviron: %s", args, os.environ)
+if __name__ == "__main__":
+    main()

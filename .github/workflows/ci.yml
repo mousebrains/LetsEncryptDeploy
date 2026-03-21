@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-python:
-    name: Check Python scripts
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,14 +21,40 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Compile check all Python files
-        run: |
-          status=0
-          for f in $(find . -name '*.py' -not -path './.git/*' -not -path './__pycache__/*'); do
-            echo "Checking $f"
-            python3 -m py_compile "$f" || status=1
-          done
-          exit $status
+      - run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check .
+
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - run: pip install mypy
+
+      - name: Run mypy
+        run: mypy --strict *.py
+
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - run: pip install pytest
+
+      - name: Run tests
+        run: pytest -v
 
   scan-secrets:
     name: Scan for secrets
@@ -46,4 +72,3 @@ jobs:
             fi
           done
           exit $status
-

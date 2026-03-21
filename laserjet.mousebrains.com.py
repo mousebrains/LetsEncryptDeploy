@@ -9,7 +9,6 @@
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
-from argparse import ArgumentParser
 import json
 import logging
 import os
@@ -17,12 +16,19 @@ import secrets
 import subprocess
 import sys
 import tempfile
+from argparse import ArgumentParser
 
-logDir = "/var/log"
+LOG_DIR = "/var/log"
 
 
-def curlPOST(curl, url, netrc_file=None, data=None, extra_args=None,
-             verbose=False):
+def curl_post(
+    curl: str,
+    url: str,
+    netrc_file: str | None = None,
+    data: str | None = None,
+    extra_args: list[str] | None = None,
+    verbose: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
     """POST with curl using a netrc file for authentication."""
     cmd = [curl, "-sk", "-X", "POST", url, "-L"]
     if verbose:
@@ -39,50 +45,54 @@ def curlPOST(curl, url, netrc_file=None, data=None, extra_args=None,
                  sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0:
-        raise RuntimeError(
-            f"curl POST {url} failed with return code {sp.returncode}: "
-            f"{sp.stderr.decode(errors='replace')}")
+        msg = f"curl POST {url} failed with return code {sp.returncode}"
+        raise RuntimeError(msg)
     return sp
 
 
-def upload_certificate(curl, hostname, pfx_path, pfx_password,
-                       netrc_file, verbose=False):
+def upload_certificate(
+    curl: str,
+    hostname: str,
+    pfx_path: str,
+    pfx_password: str,
+    netrc_file: str,
+    verbose: bool = False,
+) -> None:
     """Upload certificate through the EWS form-based flow."""
-
     base_url = f"https://{hostname}"
 
     # Step 1: Navigate to certificate configuration
     logging.info("Step 1: Navigating to certificate configuration page")
-    curlPOST(curl, f"{base_url}/hp/device/set_config_networkCerts.html/config",
-             data="ConfigurePrintCert=Configure",
-             netrc_file=netrc_file, verbose=verbose)
+    curl_post(curl, f"{base_url}/hp/device/set_config_networkCerts.html/config",
+              data="ConfigurePrintCert=Configure",
+              netrc_file=netrc_file, verbose=verbose)
 
     # Step 2: Select import certificate option
     logging.info("Step 2: Selecting import certificate option")
-    curlPOST(curl, f"{base_url}/hp/device/set_config_networkPrintCerts.html/config",
-             data="ConfigOpt=ImptCert&Next=Next",
-             netrc_file=netrc_file, verbose=verbose)
+    curl_post(curl, f"{base_url}/hp/device/set_config_networkPrintCerts.html/config",
+              data="ConfigOpt=ImptCert&Next=Next",
+              netrc_file=netrc_file, verbose=verbose)
 
     # Step 3: Upload the PKCS12 file via multipart form
     logging.info("Step 3: Uploading PKCS12 certificate")
-    curlPOST(curl, f"{base_url}/hp/device/Certificate.pfx",
-             netrc_file=netrc_file, verbose=verbose,
-             extra_args=[
-                 "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
-                 "-F", f"CertPwd={pfx_password}",
-                 "-F", "ImportCert=Import",
-             ])
+    curl_post(curl, f"{base_url}/hp/device/Certificate.pfx",
+              netrc_file=netrc_file, verbose=verbose,
+              extra_args=[
+                  "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
+                  "-F", f"CertPwd={pfx_password}",
+                  "-F", "ImportCert=Import",
+              ])
 
     logging.info("Certificate upload completed")
 
 
-def main():
-    scriptName = os.path.basename(sys.argv[0])
-    hostname = scriptName.removesuffix(".py")
+def main() -> None:
+    script_name = os.path.basename(sys.argv[0])
+    hostname = script_name.removesuffix(".py")
 
-    parser = ArgumentParser(f"{scriptName} deployment script")
+    parser = ArgumentParser(f"{script_name} deployment script")
     parser.add_argument("--logfile", type=str,
-                        default=os.path.join(logDir, f"{hostname}.log"),
+                        default=os.path.join(LOG_DIR, f"{hostname}.log"),
                         help="Where to log to, empty for stderr")
     parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
     parser.add_argument("--certName", type=str, default="fullchain.pem",
@@ -113,7 +123,7 @@ def main():
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
             if name not in os.environ:
-                raise KeyError(f"{name} not in environment")
+                raise KeyError(name + " not in environment")
 
         domains = os.environ["RENEWED_DOMAINS"].split()
         lineage = os.environ["RENEWED_LINEAGE"]
@@ -124,37 +134,38 @@ def main():
 
         crtname = os.path.join(lineage, args.certName)
         keyname = os.path.join(lineage, args.keyName)
-        configFile = os.path.abspath(os.path.expanduser(args.configFile))
+        config_file = os.path.abspath(os.path.expanduser(args.configFile))
 
         if not os.path.isfile(crtname):
-            raise FileNotFoundError(f"Certificate file not found: {crtname}")
+            raise FileNotFoundError(crtname)
         if not os.path.isfile(keyname):
-            raise FileNotFoundError(f"Key file not found: {keyname}")
-        if not os.path.isfile(configFile):
-            raise FileNotFoundError(f"Config file not found: {configFile}")
+            raise FileNotFoundError(keyname)
+        if not os.path.isfile(config_file):
+            raise FileNotFoundError(config_file)
 
-        with open(configFile) as fp:
+        with open(config_file) as fp:
             config = json.load(fp)
 
-        adminUser = config.get("admin_user", "admin")
-        adminPassword = config.get("admin_password")
-        if not adminPassword:
-            raise RuntimeError(f"admin_password not set in {configFile}")
+        admin_user: str = config.get("admin_user", "admin")
+        admin_password: str | None = config.get("admin_password")
+        if not admin_password:
+            msg = f"admin_password not set in {config_file}"
+            raise RuntimeError(msg)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create netrc file for curl authentication
-            netrcPath = os.path.join(tmpdir, "netrc")
-            with open(netrcPath, "w") as fp:
-                fp.write(f"machine {hostname} login {adminUser} password {adminPassword}\n")
+            netrc_path = os.path.join(tmpdir, "netrc")
+            with open(netrc_path, "w") as fp:
+                fp.write(f"machine {hostname} login {admin_user} password {admin_password}\n")
 
-            pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
-            pfxPath = os.path.join(tmpdir, "cert.pfx")
+            pfx_password = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+            pfx_path = os.path.join(tmpdir, "cert.pfx")
 
             # Convert PEM cert+key to PKCS12 using env var for password
             env = os.environ.copy()
-            env["PFX_PASSOUT"] = pfxPassword
+            env["PFX_PASSOUT"] = pfx_password
             cmd = (args.openssl, "pkcs12", "-export",
-                   "-out", pfxPath,
+                   "-out", pfx_path,
                    "-inkey", keyname,
                    "-in", crtname,
                    "-passout", "env:PFX_PASSOUT")
@@ -164,13 +175,12 @@ def main():
                          sp.stdout.decode(errors="replace")[:500],
                          sp.stderr.decode(errors="replace")[:500])
             if sp.returncode != 0:
-                raise RuntimeError(
-                    f"openssl pkcs12 failed with return code {sp.returncode}: "
-                    f"{sp.stderr.decode(errors='replace')}")
+                msg = f"openssl pkcs12 failed with return code {sp.returncode}"
+                raise RuntimeError(msg)
 
             # Upload the certificate
-            upload_certificate(args.curl, hostname, pfxPath, pfxPassword,
-                               netrcPath, verbose=args.verbose)
+            upload_certificate(args.curl, hostname, pfx_path, pfx_password,
+                               netrc_path, verbose=args.verbose)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:
@@ -182,6 +192,7 @@ def main():
     except Exception:
         logging.exception("GotMe")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

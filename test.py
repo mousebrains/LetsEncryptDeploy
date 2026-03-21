@@ -11,7 +11,8 @@ import os
 import subprocess
 import sys
 
-def main():
+
+def main() -> None:
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <hostname>", file=sys.stderr)
         sys.exit(1)
@@ -23,8 +24,8 @@ def main():
               f"  sudo python3 {' '.join(sys.argv)}", file=sys.stderr)
         sys.exit(1)
 
-    scriptDir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    script = os.path.join(scriptDir, f"{hostname}.py")
+    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    script = os.path.join(script_dir, f"{hostname}.py")
     if not os.path.isfile(script):
         print(f"Deploy script not found: {script}", file=sys.stderr)
         sys.exit(1)
@@ -66,6 +67,7 @@ def main():
         print(f"Log file not found: {logfile}")
 
     sys.exit(returncode)
+
 
 if __name__ == "__main__":
     main()

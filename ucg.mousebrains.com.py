@@ -9,21 +9,22 @@
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
-from argparse import ArgumentParser
 import logging
 import os
 import subprocess
 import sys
+from argparse import ArgumentParser
 
-logDir = "/var/log"
+LOG_DIR = "/var/log"
 
-def main():
-    scriptName = os.path.basename(sys.argv[0]) # This script's name
-    hostname = scriptName.removesuffix(".py")
 
-    parser = ArgumentParser(f"{scriptName} deployment script")
+def main() -> None:
+    script_name = os.path.basename(sys.argv[0])
+    hostname = script_name.removesuffix(".py")
+
+    parser = ArgumentParser(f"{script_name} deployment script")
     parser.add_argument("--logfile", type=str,
-                        default=os.path.join(logDir, f"{hostname}.log"),
+                        default=os.path.join(LOG_DIR, f"{hostname}.log"),
                         help="Where to log to, empty for stderr")
     parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
     parser.add_argument("--certName", type=str, default="fullchain.pem",
@@ -42,17 +43,16 @@ def main():
         logfilename = os.path.abspath(os.path.expanduser(args.logfile))
         logdirname = os.path.dirname(logfilename)
         if not os.path.isdir(logdirname):
-            os.makedirs(logdirname, exist_ok=True) # For race issues
+            os.makedirs(logdirname, exist_ok=True)
 
     logging.basicConfig(filename=logfilename,
                         level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s: %(message)s",
-                        )
+                        format="%(asctime)s %(levelname)s: %(message)s")
     try:
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
             if name not in os.environ:
-                raise KeyError(f"{name} not in environment")
+                raise KeyError(name + " not in environment")
 
         domains = os.environ["RENEWED_DOMAINS"].split()
         lineage = os.environ["RENEWED_LINEAGE"]
@@ -65,36 +65,29 @@ def main():
         keyname = os.path.join(lineage, args.keyName)
 
         if not os.path.isfile(crtname):
-            raise FileNotFoundError(f"Certificate file not found: {crtname}")
+            raise FileNotFoundError(crtname)
         if not os.path.isfile(keyname):
-            raise FileNotFoundError(f"Key file not found: {keyname}")
+            raise FileNotFoundError(keyname)
 
-        cmd = (
-                args.scp,
-                crtname,
-                keyname,
-                hostname + ":",
-                )
-        sp = subprocess.run(cmd, capture_output=True, timeout=180)
+        scp_cmd = (args.scp, crtname, keyname, hostname + ":")
+        sp = subprocess.run(scp_cmd, capture_output=True, timeout=180)
         logging.info("SCP returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace")[:500],
                      sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
-            raise RuntimeError(f"SCP failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+            msg = f"SCP failed with return code {sp.returncode}"
+            raise RuntimeError(msg)
 
-        cmd = (
-                args.ssh,
-                hostname,
-                args.reload,
-                )
-        sp = subprocess.run(cmd, capture_output=True, timeout=180)
+        ssh_cmd = (args.ssh, hostname, args.reload)
+        sp = subprocess.run(ssh_cmd, capture_output=True, timeout=180)
         logging.info("SSH returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace")[:500],
                      sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
-            raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
+            msg = f"SSH reload failed with return code {sp.returncode}"
+            raise RuntimeError(msg)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:
@@ -107,6 +100,6 @@ def main():
         logging.exception("GotMe")
         sys.exit(1)
 
+
 if __name__ == "__main__":
     main()
-

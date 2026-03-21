@@ -1,0 +1,41 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific
+    "S",     # flake8-bandit (security)
+    "C4",    # flake8-comprehensions
+    "PIE",   # flake8-pie
+    "RET",   # flake8-return
+    "TCH",   # flake8-type-checking
+]
+ignore = [
+    "S603",  # subprocess call with shell=False — intentional
+    "S607",  # starting a process with a partial executable path
+    "S108",  # probable insecure temp directory — we use TemporaryDirectory
+    "S301",  # pickle — not used
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test.py" = ["S605", "S607"]
+"tests/*" = ["S", "ANN"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

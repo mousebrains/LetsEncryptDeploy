@@ -12,7 +12,6 @@
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
-from argparse import ArgumentParser
 import base64
 import json
 import logging
@@ -22,12 +21,19 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+from argparse import ArgumentParser
 
-logDir = "/var/log"
+LOG_DIR = "/var/log"
 
 
-def curlPOST(curl, url, dataFile=None, contentType="application/json",
-             headerFile=None, verbose=False):
+def curl_post(
+    curl: str,
+    url: str,
+    data_file: str | None = None,
+    content_type: str = "application/json",
+    header_file: str | None = None,
+    verbose: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
     """POST data with curl, reading POST body and extra headers from temp files.
 
     The User-Agent is set to AppleWebKit because HP's printer firmware
@@ -35,13 +41,13 @@ def curlPOST(curl, url, dataFile=None, contentType="application/json",
     """
     cmd = [
         curl, "-sk", "-X", "POST", url,
-        "-H", f"Content-Type: {contentType}",
+        "-H", f"Content-Type: {content_type}",
         "-H", "User-Agent: AppleWebKit",
     ]
-    if dataFile:
-        cmd += ["-d", f"@{dataFile}"]
-    if headerFile:
-        cmd += ["-H", f"@{headerFile}"]
+    if data_file:
+        cmd += ["-d", f"@{data_file}"]
+    if header_file:
+        cmd += ["-H", f"@{header_file}"]
     if verbose:
         cmd.append("-v")
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -50,16 +56,22 @@ def curlPOST(curl, url, dataFile=None, contentType="application/json",
                  sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0:
-        raise RuntimeError(
-            f"curl POST {url} failed with return code {sp.returncode}: "
-            f"{sp.stderr.decode(errors='replace')}")
+        msg = f"curl POST {url} failed with return code {sp.returncode}"
+        raise RuntimeError(msg)
     return sp
 
 
-def authenticate(curl, hostname, username, password, tmpdir, verbose=False):
-    """Authenticate to the printer's CDM OAuth2 API using the password
-    grant flow and return a bearer token.
+def authenticate(
+    curl: str,
+    hostname: str,
+    username: str,
+    password: str,
+    tmpdir: str,
+    verbose: bool = False,
+) -> str:
+    """Authenticate to the printer's CDM OAuth2 API.
 
+    Uses the password grant flow and returns a bearer token.
     POST /cdm/oauth2/v1/token with grant_type=password
     """
     token_data = urllib.parse.urlencode({
@@ -71,42 +83,42 @@ def authenticate(curl, hostname, username, password, tmpdir, verbose=False):
     })
 
     # Write POST body to temp file to avoid credentials on command line
-    dataPath = os.path.join(tmpdir, "auth-data")
-    with open(dataPath, "w") as fp:
+    data_path = os.path.join(tmpdir, "auth-data")
+    with open(data_path, "w") as fp:
         fp.write(token_data)
 
     logging.info("AUTH: requesting token via password grant")
-    sp = curlPOST(curl, f"https://{hostname}/cdm/oauth2/v1/token",
-                   dataFile=dataPath,
-                   contentType="application/x-www-form-urlencoded",
+    sp = curl_post(curl, f"https://{hostname}/cdm/oauth2/v1/token",
+                   data_file=data_path,
+                   content_type="application/x-www-form-urlencoded",
                    verbose=verbose)
 
     try:
         result = json.loads(sp.stdout)
-    except json.JSONDecodeError:
-        raise RuntimeError(
-            f"Authentication response is not valid JSON: "
-            f"{sp.stdout.decode(errors='replace')[:500]}")
+    except json.JSONDecodeError as exc:
+        raw = sp.stdout.decode(errors="replace")[:500]
+        msg = f"Authentication response is not valid JSON: {raw}"
+        raise RuntimeError(msg) from exc
 
     logging.info("AUTH: token_type=%s scope=%s",
                  result.get("token_type"), result.get("scope"))
 
-    token = result.get("access_token")
+    token: str | None = result.get("access_token")
     if not token:
         error = result.get("error", "unknown error")
         error_desc = result.get("error_description", "")
-        raise RuntimeError(
-            f"Authentication failed: {error}\n  {error_desc}\n  response={result}")
+        msg = f"Authentication failed: {error}\n  {error_desc}\n  response={result}"
+        raise RuntimeError(msg)
     return token
 
 
-def main():
-    scriptName = os.path.basename(sys.argv[0])
-    hostname = scriptName.removesuffix(".py")
+def main() -> None:
+    script_name = os.path.basename(sys.argv[0])
+    hostname = script_name.removesuffix(".py")
 
-    parser = ArgumentParser(f"{scriptName} deployment script")
+    parser = ArgumentParser(f"{script_name} deployment script")
     parser.add_argument("--logfile", type=str,
-                        default=os.path.join(logDir, f"{hostname}.log"),
+                        default=os.path.join(LOG_DIR, f"{hostname}.log"),
                         help="Where to log to, empty for stderr")
     parser.add_argument("--verbose", action="store_true",
                         help="Enable logging.debug messages")
@@ -141,7 +153,7 @@ def main():
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
             if name not in os.environ:
-                raise KeyError(f"{name} not in environment")
+                raise KeyError(name + " not in environment")
 
         domains = os.environ["RENEWED_DOMAINS"].split()
         lineage = os.environ["RENEWED_LINEAGE"]
@@ -152,32 +164,33 @@ def main():
 
         crtname = os.path.join(lineage, args.certName)
         keyname = os.path.join(lineage, args.keyName)
-        configFile = os.path.abspath(os.path.expanduser(args.configFile))
+        config_file = os.path.abspath(os.path.expanduser(args.configFile))
 
         if not os.path.isfile(crtname):
-            raise FileNotFoundError(f"Certificate file not found: {crtname}")
+            raise FileNotFoundError(crtname)
         if not os.path.isfile(keyname):
-            raise FileNotFoundError(f"Key file not found: {keyname}")
-        if not os.path.isfile(configFile):
-            raise FileNotFoundError(f"Config file not found: {configFile}")
+            raise FileNotFoundError(keyname)
+        if not os.path.isfile(config_file):
+            raise FileNotFoundError(config_file)
 
-        with open(configFile) as fp:
+        with open(config_file) as fp:
             config = json.load(fp)
 
-        adminUser = config.get("admin_user", "admin")
-        adminPassword = config.get("admin_password")
-        if not adminPassword:
-            raise RuntimeError(f"admin_password not set in {configFile}")
+        admin_user: str = config.get("admin_user", "admin")
+        admin_password: str | None = config.get("admin_password")
+        if not admin_password:
+            msg = f"admin_password not set in {config_file}"
+            raise RuntimeError(msg)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
-            pfxPath = os.path.join(tmpdir, "cert.pfx")
+            pfx_password = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
+            pfx_path = os.path.join(tmpdir, "cert.pfx")
 
             # Convert PEM cert+key to PKCS12 using env var for password
             env = os.environ.copy()
-            env["PFX_PASSOUT"] = pfxPassword
+            env["PFX_PASSOUT"] = pfx_password
             cmd = (args.openssl, "pkcs12", "-export",
-                   "-out", pfxPath,
+                   "-out", pfx_path,
                    "-inkey", keyname,
                    "-in", crtname,
                    "-passout", "env:PFX_PASSOUT")
@@ -187,39 +200,38 @@ def main():
                          sp.stdout.decode(errors="replace")[:500],
                          sp.stderr.decode(errors="replace")[:500])
             if sp.returncode != 0:
-                raise RuntimeError(
-                    f"openssl pkcs12 failed with return code {sp.returncode}: "
-                    f"{sp.stderr.decode(errors='replace')}")
+                msg = f"openssl pkcs12 failed with return code {sp.returncode}"
+                raise RuntimeError(msg)
 
             # Read and base64-encode the PKCS12 file
-            with open(pfxPath, "rb") as fp:
-                pfxData = base64.b64encode(fp.read()).decode("ascii")
+            with open(pfx_path, "rb") as fp_bin:
+                pfx_data = base64.b64encode(fp_bin.read()).decode("ascii")
 
             # Authenticate to get a bearer token
-            token = authenticate(args.curl, hostname, adminUser, adminPassword,
+            token = authenticate(args.curl, hostname, admin_user, admin_password,
                                  tmpdir, verbose=args.verbose)
 
             # Write bearer token to a temp header file
-            headerPath = os.path.join(tmpdir, "auth-header")
-            with open(headerPath, "w") as fp:
+            header_path = os.path.join(tmpdir, "auth-header")
+            with open(header_path, "w") as fp:
                 fp.write(f"Authorization: Bearer {token}")
 
             # Write upload payload to a temp file
-            uploadPath = os.path.join(tmpdir, "upload-data")
-            with open(uploadPath, "w") as fp:
+            upload_path = os.path.join(tmpdir, "upload-data")
+            with open(upload_path, "w") as fp:
                 json.dump({
-                    "certificateData": pfxData,
+                    "certificateData": pfx_data,
                     "certificateFormat": "pkcs12",
-                    "password": pfxPassword,
+                    "password": pfx_password,
                     "privateKeyExportable": False,
                     "requestType": "importId",
                     "version": "1.1.0",
                 }, fp)
 
-            curlPOST(args.curl,
+            curl_post(args.curl,
                       f"https://{hostname}{args.uploadPath}",
-                      dataFile=uploadPath,
-                      headerFile=headerPath)
+                      data_file=upload_path,
+                      header_file=header_path)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:

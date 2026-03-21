@@ -8,42 +8,42 @@
 #
 # Mar-2026 Pat Welch pat@mousebrains.com
 
-import glob
 import os
 import shutil
 import sys
+from pathlib import Path
 
-deployDir = "/etc/letsencrypt/renewal-hooks/deploy"
+DEPLOY_DIR = "/etc/letsencrypt/renewal-hooks/deploy"
 
-def main():
+
+def main() -> None:
     if os.geteuid() != 0:
         print(f"This script must be run as root. Try:\n"
               f"  sudo python3 {' '.join(sys.argv)}", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isdir(deployDir):
-        print(f"Deploy directory not found: {deployDir}", file=sys.stderr)
+    if not os.path.isdir(DEPLOY_DIR):
+        print(f"Deploy directory not found: {DEPLOY_DIR}", file=sys.stderr)
         sys.exit(1)
 
-    scriptDir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    script_dir = Path(sys.argv[0]).resolve().parent
 
     if len(sys.argv) > 1:
         # Install specific scripts
         scripts = [f"{arg.removesuffix('.py')}.py" for arg in sys.argv[1:]]
     else:
         # Install all deploy hook scripts (*.mousebrains.com.py)
-        scripts = [os.path.basename(f)
-                   for f in sorted(glob.glob(os.path.join(scriptDir, "*.mousebrains.com.py")))]
+        scripts = sorted(p.name for p in script_dir.glob("*.mousebrains.com.py"))
         if not scripts:
             print("No deploy hook scripts found", file=sys.stderr)
             sys.exit(1)
 
     errors = 0
-    for scriptName in scripts:
-        src = os.path.join(scriptDir, scriptName)
-        dst = os.path.join(deployDir, scriptName)
+    for script_name in scripts:
+        src = script_dir / script_name
+        dst = os.path.join(DEPLOY_DIR, script_name)
 
-        if not os.path.isfile(src):
+        if not src.is_file():
             print(f"Deploy script not found: {src}", file=sys.stderr)
             errors += 1
             continue
@@ -52,6 +52,7 @@ def main():
         print(f"Installed {src} -> {dst}")
 
     sys.exit(1 if errors else 0)
+
 
 if __name__ == "__main__":
     main()

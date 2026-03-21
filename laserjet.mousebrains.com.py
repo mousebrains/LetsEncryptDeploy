@@ -13,46 +13,42 @@
 #
 # On your letsencrypt host:
 #  1) Create the certificate with an RSA key:
-#     sudo certbot certonly --key-type rsa -d laserjet.mousebrains.com
-#  2) Store the printer's EWS admin password in a file:
-#     echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/laserjet.admin.password
-#     sudo chmod 600 /etc/letsencrypt/laserjet.admin.password
+#     sudo certbot certonly --key-type rsa --dns-cloudflare \
+#         --dns-cloudflare-credentials /home/pat/.config/cloudflare.token \
+#         -d laserjet.mousebrains.com
+#  2) Create a JSON config file with the printer's EWS admin credentials:
+#     tee ~pat/.config/laserjet.json <<< '{"admin_user":"admin","admin_password":"YOUR_PASSWORD"}'
+#     chmod 600 ~pat/.config/laserjet.json
 #  3) Install this script:
 #     sudo cp laserjet.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
-#     sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/laserjet.mousebrains.com.py
 #
 # The name of the script should be the FQDN of the printer (with .py extension)
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
 from argparse import ArgumentParser
+import json
 import logging
 import os
 import secrets
-import sys
 import subprocess
+import sys
 import tempfile
-from typing import Optional
 
 logDir = "/var/log"
 
 
-def curlPOST(curl: str, url: str, data: Optional[str] = None,
-             form_file: Optional[tuple] = None,
-             username: Optional[str] = None, password: Optional[str] = None,
+def curlPOST(curl: str, url: str, data: str | None = None,
+             netrc_file: str | None = None,
              verbose: bool = False) -> subprocess.CompletedProcess:
-    """POST data or file with curl using HTTP Basic Auth."""
+    """POST data with curl using a netrc file for authentication."""
     cmd = [curl, "-sk", "-X", "POST", url, "-L"]
     if verbose:
         cmd.append("-v")
-    if username and password:
-        cmd += ["-u", f"{username}:{password}"]
+    if netrc_file:
+        cmd += ["--netrc-file", netrc_file]
     if data:
         cmd += ["-H", "Content-Type: application/x-www-form-urlencoded", "-d", data]
-    if form_file:
-        # form_file is (field_name, file_path, filename)
-        field_name, file_path, filename = form_file
-        cmd += ["-F", f"{field_name}=@{file_path};filename={filename}"]
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
     logging.info("POST %s returncode=%s stdout=%s stderr=%s",
                  url, sp.returncode,
@@ -64,7 +60,7 @@ def curlPOST(curl: str, url: str, data: Optional[str] = None,
 
 
 def upload_certificate(curl: str, hostname: str, pfx_path: str, pfx_password: str,
-                       username: str, password: str, verbose: bool = False) -> None:
+                       netrc_file: str, verbose: bool = False) -> None:
     """Upload certificate through the EWS form-based flow."""
 
     base_url = f"https://{hostname}"
@@ -73,20 +69,20 @@ def upload_certificate(curl: str, hostname: str, pfx_path: str, pfx_password: st
     logging.info("Step 1: Navigating to certificate configuration page")
     curlPOST(curl, f"{base_url}/hp/device/set_config_networkCerts.html/config",
              data="ConfigurePrintCert=Configure",
-             username=username, password=password, verbose=verbose)
+             netrc_file=netrc_file, verbose=verbose)
 
     # Step 2: Select import certificate option
     logging.info("Step 2: Selecting import certificate option")
     curlPOST(curl, f"{base_url}/hp/device/set_config_networkPrintCerts.html/config",
              data="ConfigOpt=ImptCert&Next=Next",
-             username=username, password=password, verbose=verbose)
+             netrc_file=netrc_file, verbose=verbose)
 
     # Step 3: Upload the PKCS12 file via multipart form
     # The form has fields: CertFile (the file), CertPwd (password), ImportCert (submit button)
     logging.info("Step 3: Uploading PKCS12 certificate")
     cmd = [curl, "-sk", "-X", "POST", "-L",
            f"{base_url}/hp/device/Certificate.pfx",
-           "-u", f"{username}:{password}",
+           "--netrc-file", netrc_file,
            "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
            "-F", f"CertPwd={pfx_password}",
            "-F", "ImportCert=Import"]
@@ -121,11 +117,9 @@ def main():
                         help="Which certificate file to use")
     parser.add_argument("--keyName", type=str, default="privkey.pem",
                         help="Which key file to use")
-    parser.add_argument("--adminPasswordFile", type=str,
-                        default="/etc/letsencrypt/laserjet.admin.password",
-                        help="File containing the printer's EWS admin password")
-    parser.add_argument("--adminUser", type=str, default="admin",
-                        help="EWS admin username")
+    parser.add_argument("--configFile", type=str,
+                        default="~pat/.config/laserjet.json",
+                        help="JSON config file with admin_user and admin_password")
     parser.add_argument("--openssl", type=str, default="/usr/bin/openssl",
                         help="OpenSSL command to use")
     parser.add_argument("--curl", type=str, default="/usr/bin/curl",
@@ -145,6 +139,7 @@ def main():
                         )
 
     pfxPath = None
+    netrcPath = None
     try:
         for key in ["DOMAINS", "LINEAGE"]:
             name = "RENEWED_" + key
@@ -161,33 +156,45 @@ def main():
         crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
         keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
 
+        configFile = os.path.abspath(os.path.expanduser(args.configFile))
+
         if not os.path.isfile(crtname):
             raise FileNotFoundError(f"Certificate file not found: {crtname}")
         if not os.path.isfile(keyname):
             raise FileNotFoundError(f"Key file not found: {keyname}")
-        if not os.path.isfile(args.adminPasswordFile):
-            raise FileNotFoundError(f"Admin password file not found: {args.adminPasswordFile}")
+        if not os.path.isfile(configFile):
+            raise FileNotFoundError(f"Config file not found: {configFile}")
 
-        with open(args.adminPasswordFile) as fp:
-            adminPassword = fp.read().strip()
+        with open(configFile) as fp:
+            config = json.load(fp)
+
+        adminUser = config.get("admin_user", "admin")
+        adminPassword = config.get("admin_password")
         if not adminPassword:
-            raise RuntimeError(f"Admin password file is empty: {args.adminPasswordFile}")
+            raise RuntimeError(f"admin_password not set in {configFile}")
 
-        pfxPassword = secrets.token_urlsafe(32)
+        # Create a temporary netrc file for curl authentication
+        fd, netrcPath = tempfile.mkstemp(prefix="netrc-", mode=0o600)
+        with os.fdopen(fd, "w") as fp:
+            fp.write(f"machine {hostname} login {adminUser} password {adminPassword}\n")
+
+        pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
 
         # Create a temp file for the PKCS12 bundle
         fd, pfxPath = tempfile.mkstemp(suffix=".pfx")
         os.close(fd)
 
-        # Convert PEM cert+key to PKCS12
+        # Convert PEM cert+key to PKCS12 using env var for password
+        env = os.environ.copy()
+        env["PFX_PASSOUT"] = pfxPassword
         cmd = (
                 args.openssl, "pkcs12", "-export",
                 "-out", pfxPath,
                 "-inkey", keyname,
                 "-in", crtname,
-                "-password", f"pass:{pfxPassword}",
+                "-passout", "env:PFX_PASSOUT",
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180, env=env)
         logging.info("openssl returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -197,10 +204,10 @@ def main():
 
         # Upload the certificate
         upload_certificate(args.curl, hostname, pfxPath, pfxPassword,
-                           args.adminUser, adminPassword, verbose=args.verbose)
+                           netrcPath, verbose=args.verbose)
 
         logging.info("Deployment to %s completed successfully", hostname)
-    except (FileNotFoundError, RuntimeError) as e:
+    except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)
     except Exception:
@@ -209,6 +216,8 @@ def main():
     finally:
         if pfxPath and os.path.isfile(pfxPath):
             os.unlink(pfxPath)
+        if netrcPath and os.path.isfile(netrcPath):
+            os.unlink(netrcPath)
 
 if __name__ == "__main__":
     main()

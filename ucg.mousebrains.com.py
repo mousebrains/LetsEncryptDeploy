@@ -42,8 +42,8 @@ logDir = "/var/log"
 from argparse import ArgumentParser
 import logging
 import os
-import sys
 import subprocess
+import sys
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name
@@ -125,7 +125,7 @@ def main():
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
         logging.info("Deployment to %s completed successfully", hostname)
-    except (FileNotFoundError, RuntimeError) as e:
+    except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)
     except Exception:

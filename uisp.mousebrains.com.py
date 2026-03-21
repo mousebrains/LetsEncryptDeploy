@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--keyName", type=str, default="privkey.pem",
                         help="Which key file to use")
     parser.add_argument("--certDir", type=str,
-                        default="/etc/certificates/uisp.mousebrains.com",
+                        default=f"/etc/certificates/{hostname}",
                         help="Remote directory for certificate files on the UISP host")
     parser.add_argument("--reload", type=str,
                         default="app/unms-cli restart",
@@ -103,7 +103,7 @@ def main():
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
         logging.info("Deployment to %s completed successfully", hostname)
-    except (FileNotFoundError, RuntimeError) as e:
+    except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)
     except Exception:

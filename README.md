@@ -16,6 +16,7 @@ Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` w
 - [UniFi Cloud Gateway](README.ucg.md)
 - [UISP](README.uisp.md)
 - [HP LaserJet MFP](README.ljscan.md)
+- [HP Color LaserJet M452dn](README.laserjet.md)
 
 ## Testing
 

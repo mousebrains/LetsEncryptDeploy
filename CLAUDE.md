@@ -8,17 +8,22 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 
 ## Repository Structure
 
-- `ucg.mousebrains.com.py` - Certbot deploy hook for UniFi Cloud Gateway (Python)
-- `uisp.mousebrains.com.py` - Certbot deploy hook for UISP (Python, uses paramiko + cryptography)
-- `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + urllib)
-- `README.uisp` - UISP-specific setup notes
+- `ucg.mousebrains.com.py` - Certbot deploy hook for UniFi Cloud Gateway (Python, uses SSH/SCP)
+- `uisp.mousebrains.com.py` - Certbot deploy hook for UISP (Python, uses SSH/SCP)
+- `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + curl)
+- `laserjet.mousebrains.com.py` - Certbot deploy hook for HP Color LaserJet M452dn (Python, uses openssl + curl)
+- `README.ucg.md` - UniFi Cloud Gateway setup notes
+- `README.uisp.md` - UISP setup notes
+- `README.ljscan.md` - HP LaserJet MFP setup notes
+- `README.laserjet.md` - HP Color LaserJet M452dn setup notes
 
 ## Languages and Tools
 
 - **Python 3.10+** for certbot deploy hooks (`*.py`)
 - **certbot** for Let's Encrypt certificate management
-- **SSH/SCP** for remote certificate deployment
-- **openssl** for PKCS12 conversion (HP printer); HTTPS upload uses Python stdlib (`urllib`)
+- **SSH/SCP** for remote certificate deployment (UCG, UISP)
+- **openssl** for PKCS12 conversion (HP printers)
+- **curl** for HTTPS certificate upload (HP printers)
 - No package manager or build system; scripts are standalone
 
 ## Common Commands
@@ -43,13 +48,16 @@ sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks
 - Python scripts log to `/var/log/<fqdn>.log` by default.
 - Subprocess calls should include `timeout=180` and use `.decode(errors="replace")` on output.
 - Check subprocess return codes and raise on failure so the except block can log and `sys.exit(1)`.
+- Catch `KeyError` (missing env vars), `FileNotFoundError`, and `RuntimeError` explicitly; use generic `except Exception` as a fallback.
+- Avoid exposing secrets on the command line; use environment variables (`-passout env:VAR`) for openssl and netrc files (`--netrc-file`) for curl.
 
 ## Security Notes
 
-- Never commit certificate files (`.pem`, `.key`) or SSH keys (`id_rsa*`); these are in `.gitignore`.
+- Never commit certificate files (`.pem`, `.key`, `.pfx`, `.p12`) or SSH keys (`id_rsa*`); these are in `.gitignore`.
 - Scripts run as root. SSH key paths default to `/root/.ssh/`.
 - Deploy hooks use SSH key authentication configured in `/root/.ssh/config`.
-- HP printer admin password is stored in `/etc/letsencrypt/ljscan.admin.password` (mode 600).
+- HP LaserJet M452dn admin credentials are stored in `~pat/.config/laserjet.json` (mode 600).
+- HP LaserJet MFP admin credentials are stored in `~pat/.config/ljscan.json` (mode 600).
 - HP LaserJet printers require RSA keys; ECC keys are not supported.
 
 ## License

@@ -13,9 +13,9 @@
 # On your letsencrypt host:
 #  1) Create the certificate with an RSA key:
 #     sudo certbot certonly --key-type rsa -d ljscan.mousebrains.com
-#  2) Store the printer's EWS admin password in a file:
-#     echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/ljscan.admin.password
-#     sudo chmod 600 /etc/letsencrypt/ljscan.admin.password
+#  2) Create a JSON config file with the printer's EWS admin credentials:
+#     tee ~pat/.config/ljscan.json <<< '{"admin_user":"admin","admin_password":"YOUR_PASSWORD"}'
+#     chmod 600 ~pat/.config/ljscan.json
 #  3) Install this script:
 #     sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
 #     sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/ljscan.mousebrains.com.py
@@ -148,13 +148,10 @@ def main():
         "--keyName", type=str, default="privkey.pem", help="Which key file to use"
     )
     parser.add_argument(
-        "--adminPasswordFile",
+        "--configFile",
         type=str,
-        default="/etc/letsencrypt/ljscan.admin.password",
-        help="File containing the printer's EWS admin password",
-    )
-    parser.add_argument(
-        "--adminUser", type=str, default="admin", help="EWS admin username"
+        default="~pat/.config/ljscan.json",
+        help="JSON config file with admin_user and admin_password",
     )
     parser.add_argument(
         "--uploadPath",
@@ -204,29 +201,32 @@ def main():
             os.path.expanduser(os.path.join(lineage, args.keyName))
         )
 
+        configFile = os.path.abspath(os.path.expanduser(args.configFile))
+
         if not os.path.isfile(crtname):
             raise FileNotFoundError(f"Certificate file not found: {crtname}")
         if not os.path.isfile(keyname):
             raise FileNotFoundError(f"Key file not found: {keyname}")
-        if not os.path.isfile(args.adminPasswordFile):
-            raise FileNotFoundError(
-                f"Admin password file not found: {args.adminPasswordFile}"
-            )
+        if not os.path.isfile(configFile):
+            raise FileNotFoundError(f"Config file not found: {configFile}")
 
-        with open(args.adminPasswordFile) as fp:
-            adminPassword = fp.read().strip()
+        with open(configFile) as fp:
+            config = json.load(fp)
+
+        adminUser = config.get("admin_user", "admin")
+        adminPassword = config.get("admin_password")
         if not adminPassword:
-            raise RuntimeError(
-                f"Admin password file is empty: {args.adminPasswordFile}"
-            )
+            raise RuntimeError(f"admin_password not set in {configFile}")
 
-        pfxPassword = secrets.token_urlsafe(32)
+        pfxPassword = secrets.token_hex(6)  # 12-char alphanumeric, printer limit
 
         # Create a temp file for the PKCS12 bundle
         fd, pfxPath = tempfile.mkstemp(suffix=".pfx")
         os.close(fd)
 
-        # Convert PEM cert+key to PKCS12
+        # Convert PEM cert+key to PKCS12 using env var for password
+        env = os.environ.copy()
+        env["PFX_PASSOUT"] = pfxPassword
         cmd = (
             args.openssl,
             "pkcs12",
@@ -237,10 +237,10 @@ def main():
             keyname,
             "-in",
             crtname,
-            "-password",
-            f"pass:{pfxPassword}",
+            "-passout",
+            "env:PFX_PASSOUT",
         )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180, env=env)
         logging.info(
             "openssl returncode=%s stdout=%s stderr=%s",
             sp.returncode,
@@ -258,7 +258,7 @@ def main():
 
         # Authenticate to get a bearer token
         token = authenticate(
-            args.curl, hostname, args.adminUser, adminPassword, verbose=args.verbose
+            args.curl, hostname, adminUser, adminPassword, verbose=args.verbose
         )
 
         # Upload the certificate
@@ -280,7 +280,7 @@ def main():
         )
 
         logging.info("Deployment to %s completed successfully", hostname)
-    except (FileNotFoundError, RuntimeError) as e:
+    except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)
     except Exception:

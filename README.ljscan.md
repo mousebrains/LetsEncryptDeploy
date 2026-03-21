@@ -1,11 +1,8 @@
 # HP LaserJet MFP (ljscan.mousebrains.com)
 
-Deploys Let's Encrypt certificates to HP LaserJet printers via their Embedded Web Server (EWS). HP LaserJet printers require RSA keys; ECC keys are not supported.
+Deploys Let's Encrypt certificates to an HP LaserJet MFP printer via its CDM OAuth2 API.
 
-There are two deploy scripts for different printer models:
-
-- `ljscan.mousebrains.com.py` -- HP LaserJet MFP (uses CDM OAuth2 API)
-- `laserjet.mousebrains.com.py` -- HP Color LaserJet M452dn (uses HTTP Basic Auth)
+HP LaserJet printers require RSA keys; ECC keys are not supported.
 
 ## On the Let's Encrypt host
 
@@ -17,14 +14,21 @@ sudo certbot certonly --key-type rsa --dns-cloudflare \
     -d ljscan.mousebrains.com
 ```
 
-### Store the printer's EWS admin password
+### Create the JSON config file
+
+Store the printer's EWS admin credentials in a JSON file readable only by root:
 
 ```bash
-echo 'YOUR_ADMIN_PASSWORD' | sudo tee /etc/letsencrypt/ljscan.admin.password
+tee ~pat/.config/ljscan.json > /dev/null <<'EOF'
+{
+    "admin_user": "admin",
+    "admin_password": "YOUR_PASSWORD"
+}
+EOF
 ```
 
 ```bash
-sudo chmod 600 /etc/letsencrypt/ljscan.admin.password
+chmod 600 ~pat/.config/ljscan.json
 ```
 
 ### Install the deploy hook
@@ -35,7 +39,6 @@ sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
 
 ## How it works
 
-The script converts the PEM certificate and key to PKCS12 format, base64-encodes it, and uploads it to the printer:
+The script converts the PEM certificate and key to PKCS12 format, base64-encodes it, and uploads it to the printer. Authentication uses the CDM OAuth2 password grant (`/cdm/oauth2/v1/token`) to obtain a bearer token, then POSTs the PKCS12 to `/cdm/certificate/v1/certificates`.
 
-- **ljscan** (MFP): Authenticates via CDM OAuth2 password grant (`/cdm/oauth2/v1/token`), then POSTs the PKCS12 to `/cdm/certificate/v1/certificates`. Override the endpoint with `--uploadPath`.
-- **laserjet** (M452dn): Authenticates via HTTP Basic Auth and uploads the PKCS12 through the EWS configuration pages.
+The PKCS12 password is passed to openssl via an environment variable (not on the command line). Override the upload endpoint with `--uploadPath`.

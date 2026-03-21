@@ -9,10 +9,17 @@ __pycache__/
 *.tmp
 *.temp
 
-# SSH keys (for security)
+# Certificates and keys (for security)
 *.pem
 *.key
+*.pfx
+*.p12
 id_rsa*
+
+# Password/credential files
+*.password
+ljscan.json
+laserjet.json
 
 # Backup files
 *.backup

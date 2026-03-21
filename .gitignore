@@ -16,6 +16,8 @@ __pycache__/
 *.pfx
 *.p12
 id_rsa*
+id_ed25519*
+id_ecdsa*
 
 # Password/credential files
 *.password

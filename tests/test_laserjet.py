@@ -149,6 +149,37 @@ class TestLaserjetMain:
                 mod.main()
             assert exc_info.value.code == 0
 
+    def test_missing_config_file(self, cert_dir):
+        """Should exit 1 when config file doesn't exist."""
+        hostname = cert_dir.name
+        os.environ["RENEWED_DOMAINS"] = hostname
+        os.environ["RENEWED_LINEAGE"] = str(cert_dir)
+        with patch.object(sys, "argv",
+                          [f"{hostname}.py", "--logfile", "",
+                           "--configFile", "/nonexistent/config.json"]):
+            mod = load_laserjet()
+            with pytest.raises(SystemExit, match="1"):
+                mod.main()
+
+    def test_openssl_failure(self, cert_dir, config_file):
+        """Should exit 1 when openssl fails."""
+        hostname = cert_dir.name
+        os.environ["RENEWED_DOMAINS"] = hostname
+        os.environ["RENEWED_LINEAGE"] = str(cert_dir)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = b""
+        mock_result.stderr = b"openssl error"
+
+        with patch.object(sys, "argv",
+                          [f"{hostname}.py", "--logfile", "",
+                           "--configFile", str(config_file)]), \
+             patch("subprocess.run", return_value=mock_result):
+            mod = load_laserjet()
+            with pytest.raises(SystemExit, match="1"):
+                mod.main()
+
     def test_netrc_file_created_in_tmpdir(self, cert_dir, config_file):
         """Should create netrc file with credentials in temp dir."""
         hostname = cert_dir.name

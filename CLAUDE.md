@@ -18,6 +18,8 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 - `README.laserjet.md` - HP Color LaserJet M452dn setup notes
 - `test.py` - Manual testing helper (sets env vars and runs a deploy hook)
 - `install.py` - Installs deploy hooks to certbot's renewal-hooks/deploy directory
+- `CHANGELOG.md` - Project changelog
+- `CONTRIBUTING.md` - Contribution guidelines and development workflow
 
 ## Languages and Tools
 
@@ -31,8 +33,10 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 ## Common Commands
 
 ```bash
-# Syntax check a Python deploy hook
-python3 -m py_compile ucg.mousebrains.com.py
+# Run linting, type checking, and tests
+ruff check .
+mypy --strict *.py
+pytest -v
 
 # Test a deploy hook (without renewing the certificate)
 sudo python3 test.py ucg.mousebrains.com
@@ -58,7 +62,7 @@ echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x
 
 ## Security Notes
 
-- Never commit certificate files (`.pem`, `.key`, `.pfx`, `.p12`) or SSH keys (`id_rsa*`); these are in `.gitignore`.
+- Never commit certificate files (`.pem`, `.key`, `.pfx`, `.p12`) or SSH keys (`id_rsa*`, `id_ed25519*`, `id_ecdsa*`); these are in `.gitignore`.
 - Scripts run as root. SSH key paths default to `/root/.ssh/`.
 - Deploy hooks use SSH key authentication configured in `/root/.ssh/config`.
 - HP LaserJet M452dn admin credentials are stored in `~pat/.config/laserjet.json` (mode 600).

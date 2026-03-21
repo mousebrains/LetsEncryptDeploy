@@ -22,7 +22,7 @@ def main() -> None:
               f"  sudo python3 {' '.join(sys.argv)}", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isdir(DEPLOY_DIR):
+    if not Path(DEPLOY_DIR).is_dir():
         print(f"Deploy directory not found: {DEPLOY_DIR}", file=sys.stderr)
         sys.exit(1)
 
@@ -41,7 +41,7 @@ def main() -> None:
     errors = 0
     for script_name in scripts:
         src = script_dir / script_name
-        dst = os.path.join(DEPLOY_DIR, script_name)
+        dst = Path(DEPLOY_DIR) / script_name
 
         if not src.is_file():
             print(f"Deploy script not found: {src}", file=sys.stderr)
@@ -51,7 +51,8 @@ def main() -> None:
         shutil.copy2(src, dst)
         print(f"Installed {src} -> {dst}")
 
-    sys.exit(1 if errors else 0)
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

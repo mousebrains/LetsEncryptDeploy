@@ -5,6 +5,15 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_env():
+    """Snapshot and restore os.environ around every test."""
+    old_env = os.environ.copy()
+    yield
+    os.environ.clear()
+    os.environ.update(old_env)
+
+
 @pytest.fixture
 def cert_dir(tmp_path):
     """Create a fake letsencrypt live directory with dummy cert and key."""
@@ -20,12 +29,9 @@ def cert_dir(tmp_path):
 def env_vars(cert_dir):
     """Set RENEWED_DOMAINS and RENEWED_LINEAGE env vars for testing."""
     hostname = cert_dir.name
-    old_env = os.environ.copy()
     os.environ["RENEWED_DOMAINS"] = hostname
     os.environ["RENEWED_LINEAGE"] = str(cert_dir)
-    yield hostname
-    os.environ.clear()
-    os.environ.update(old_env)
+    return hostname
 
 
 @pytest.fixture
@@ -39,9 +45,5 @@ def config_file(tmp_path):
 @pytest.fixture
 def clean_env():
     """Ensure RENEWED_* env vars are not set."""
-    old_env = os.environ.copy()
     os.environ.pop("RENEWED_DOMAINS", None)
     os.environ.pop("RENEWED_LINEAGE", None)
-    yield
-    os.environ.clear()
-    os.environ.update(old_env)

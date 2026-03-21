@@ -6,28 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Changed
-- Minimum Python version raised from 3.10 to 3.13.
-- Replaced cryptic fallback error messages with descriptive context.
-
-### Added
-- Troubleshooting section in README.
-- CONTRIBUTING.md with development and contribution guidelines.
-- This changelog.
-- README badges for CI, Python version, license, ruff, and mypy.
-
 ## [2026-03-21]
 
 ### Added
 - Ruff linting (22 rule categories), mypy strict type checking, and pytest CI jobs.
-- 48 unit tests covering all deploy hooks and install.py.
-- Secrets scanning CI job to catch accidental key commits.
+- 52 unit tests covering all deploy hooks and install.py.
+- Secrets scanning CI job to catch accidental key commits (`.py`, `.sh`, `.conf`, `.md`, `.json`, `.yml`, `.yaml`).
 - `install.py` for copying hooks to certbot's renewal-hooks directory.
+- Troubleshooting section in README.
+- CONTRIBUTING.md with development and contribution guidelines.
+- CHANGELOG.md.
+- README badges for CI, Python version, license, ruff, and mypy.
+- `autouse` env isolation fixture in tests to prevent env var leakage.
+- `id_ed25519*` and `id_ecdsa*` to `.gitignore`.
 
 ### Changed
+- Minimum Python version raised from 3.10 to 3.13.
+- Replaced cryptic fallback error messages with descriptive context.
+- Simplified `install.py` to use pathlib consistently; no longer calls `sys.exit(0)` on success.
 - Simplified temp file management to use `tempfile.TemporaryDirectory`.
 - Increased UISP reload timeout to 600 seconds.
 - Updated CI actions to v5/v6 for Node.js 24 compatibility.
+- `test.py` now forwards extra arguments to the deploy hook.
 
 ### Fixed
 - `mkstemp` mode argument.

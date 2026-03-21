@@ -1,14 +1,13 @@
 #! /usr/bin/python3
 #
-# Certbot deploy hook for UISP (uisp.mousebrains.com)
-#
-# Designed to be run by certbot from /etc/letsencrypt/renewal-hooks/deploy
-# to deploy a renewed certificate. It will be run as the root user.
+# Certbot deploy hook for UISP.
 #
 # SCPs fullchain.pem and privkey.pem to the UISP host's certificate directory,
 # then SSHes in to restart the UISP service so it picks up the new cert.
 #
-# Sep-2025, Pat Welch, pat@mousebrains.com
+# See README.uisp.md for setup instructions.
+#
+# Sep-2025 Pat Welch pat@mousebrains.com
 
 import logging
 import os

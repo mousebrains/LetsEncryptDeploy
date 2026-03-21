@@ -24,7 +24,6 @@ ignore = [
     "S603",  # subprocess call with shell=False — intentional
     "S607",  # starting a process with a partial executable path
     "S108",  # probable insecure temp directory — we use TemporaryDirectory
-    "S301",  # pickle — not used
 ]
 
 [tool.ruff.lint.per-file-ignores]

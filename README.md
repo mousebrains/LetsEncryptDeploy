@@ -32,10 +32,10 @@ Use `install.py` to copy deploy hooks into certbot's directory:
 sudo python3 install.py ucg.mousebrains.com
 ```
 
-Install all hooks at once:
+Install all hooks at once (no arguments installs every `*.mousebrains.com.py` script):
 
 ```bash
-sudo python3 install.py ucg.mousebrains.com uisp.mousebrains.com ljscan.mousebrains.com laserjet.mousebrains.com
+sudo python3 install.py
 ```
 
 ## Testing
@@ -88,10 +88,10 @@ Check the log file for errors:
 sudo cat /var/log/ucg.mousebrains.com.log
 ```
 
-Run the hook manually with `--verbose` for debug output:
+Run the hook manually for debug output (`test.py` always enables `--verbose`):
 
 ```bash
-sudo python3 test.py ucg.mousebrains.com --verbose
+sudo python3 test.py ucg.mousebrains.com
 ```
 
 ### "Permission denied" or SSH connection failures
@@ -99,13 +99,13 @@ sudo python3 test.py ucg.mousebrains.com --verbose
 Ensure the SSH key is installed for root and the target host is in `/root/.ssh/config`:
 
 ```bash
-sudo ssh -i /root/.ssh/id_rsa user@device hostname
+sudo ssh device hostname
 ```
 
-If this fails, re-copy the key:
+If this fails, verify the key exists and re-copy it:
 
 ```bash
-sudo ssh-copy-id -i /root/.ssh/id_rsa user@device
+sudo ssh-copy-id device
 ```
 
 ### "RENEWED_DOMAINS" or "RENEWED_LINEAGE" KeyError
@@ -120,7 +120,13 @@ The hook is being run outside of certbot. Use `test.py` to set the required envi
 
 ### Timeout errors
 
-The default subprocess timeout is 180 seconds (600 seconds for UISP restarts). If your device or network is slow, you may see `TimeoutExpired` errors in the log. For UISP, increase the timeout with `--reloadTimeout`.
+The default subprocess timeout is 180 seconds (600 seconds for UISP restarts). If your device or network is slow, you may see `TimeoutExpired` errors in the log. When testing manually, you can pass extra arguments:
+
+```bash
+sudo python3 test.py uisp.mousebrains.com --reloadTimeout 900
+```
+
+For certbot-invoked hooks, edit the `default=` value in the script's argparse definition.
 
 ### Verifying the deployed certificate
 
@@ -134,10 +140,14 @@ The `notAfter` date should reflect the renewed certificate.
 
 ## Creating a new deploy hook
 
-1. Copy an existing script and rename it to `<your-fqdn>.py`.
+1. Copy an existing script that's closest to your target device and rename it to `<your-fqdn>.py`.
 2. The hostname is derived from the filename automatically.
-3. Adjust the `--reload` command if the target device uses something other than `nginx -s reload`.
-4. Install with `sudo python3 install.py <your-fqdn>`.
+3. Modify the deployment logic for your device (SCP + SSH reload, curl upload, etc.).
+4. Add a setup document as `README.<short-name>.md` and list the new hook in this file.
+5. Add tests in `tests/test_<short-name>.py`.
+6. Install with `sudo python3 install.py <your-fqdn>`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full conventions.
 
 ## License
 

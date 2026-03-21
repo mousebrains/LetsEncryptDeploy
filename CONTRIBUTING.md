@@ -50,7 +50,7 @@ When writing or modifying a deploy hook:
 3. Modify the deployment logic (SCP, curl, etc.) for your device.
 4. Add a setup document as `README.<short-name>.md`.
 5. Add tests in `tests/test_<short-name>.py`.
-6. Update `README.md` to list the new hook.
+6. Update `README.md` — add the hook to both the **Scripts** and **Device-specific setup** sections.
 
 ## Tests
 

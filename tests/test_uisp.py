@@ -81,6 +81,34 @@ class TestUISPMain:
             ssh_call = mock_run.call_args_list[1]
             assert ssh_call[1]["timeout"] == 300
 
+    def test_missing_cert_file(self, cert_dir):
+        """Should exit 1 when certificate file doesn't exist."""
+        hostname = cert_dir.name
+        os.environ["RENEWED_DOMAINS"] = hostname
+        os.environ["RENEWED_LINEAGE"] = str(cert_dir)
+        (cert_dir / "fullchain.pem").unlink()
+        with patch.object(sys, "argv", [f"{hostname}.py", "--logfile", ""]):
+            mod = load_uisp()
+            with pytest.raises(SystemExit, match="1"):
+                mod.main()
+
+    def test_scp_failure(self, cert_dir):
+        """Should exit 1 when SCP fails."""
+        hostname = cert_dir.name
+        os.environ["RENEWED_DOMAINS"] = hostname
+        os.environ["RENEWED_LINEAGE"] = str(cert_dir)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = b""
+        mock_result.stderr = b"Connection refused"
+
+        with patch.object(sys, "argv", [f"{hostname}.py", "--logfile", ""]), \
+             patch("subprocess.run", return_value=mock_result):
+            mod = load_uisp()
+            with pytest.raises(SystemExit, match="1"):
+                mod.main()
+
     def test_scp_timeout(self, cert_dir):
         """Should exit 1 on SCP timeout."""
         hostname = cert_dir.name

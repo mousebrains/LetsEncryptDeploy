@@ -2,8 +2,9 @@
 #
 # Test a deploy hook script locally without renewing the certificate.
 #
-# Usage: sudo python3 test.py <hostname>
+# Usage: sudo python3 test.py <hostname> [deploy-hook-args...]
 #   e.g. sudo python3 test.py ljscan.mousebrains.com
+#        sudo python3 test.py ljscan.mousebrains.com --logfile ""
 #
 # Mar-2026 Pat Welch pat@mousebrains.com
 
@@ -13,11 +14,12 @@ import sys
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <hostname>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <hostname> [deploy-hook-args...]", file=sys.stderr)
         sys.exit(1)
 
     hostname = sys.argv[1].removesuffix(".py")
+    extra_args = sys.argv[2:]
 
     if os.geteuid() != 0:
         print(f"This script must be run as root. Try:\n"
@@ -39,17 +41,14 @@ def main() -> None:
     env["RENEWED_DOMAINS"] = hostname
     env["RENEWED_LINEAGE"] = lineage
 
-    print(f"Running {script} --verbose")
+    cmd = [sys.executable, script, "--verbose", *extra_args]
+    print(f"Running {' '.join(cmd)}")
     print(f"  RENEWED_DOMAINS={hostname}")
     print(f"  RENEWED_LINEAGE={lineage}")
     print()
 
     try:
-        sp = subprocess.run(
-            [sys.executable, script, "--verbose"],
-            env=env,
-            timeout=900,
-        )
+        sp = subprocess.run(cmd, env=env, timeout=900)
         returncode = sp.returncode
     except subprocess.TimeoutExpired:
         print(f"ERROR: {script} timed out after 900 seconds", file=sys.stderr)

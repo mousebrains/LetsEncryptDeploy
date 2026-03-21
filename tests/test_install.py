@@ -48,9 +48,7 @@ class TestInstall:
              patch.object(sys, "argv", [str(src_dir / "install.py"), "test.example.com"]):
             mod = load_install()
             mod.DEPLOY_DIR = str(deploy_dir)
-            with pytest.raises(SystemExit) as exc_info:
-                mod.main()
-            assert exc_info.value.code == 0
+            mod.main()  # Should complete without SystemExit
 
         assert (deploy_dir / "test.example.com.py").exists()
         assert (deploy_dir / "test.example.com.py").read_text() == script.read_text()
@@ -68,9 +66,7 @@ class TestInstall:
              patch.object(sys, "argv", [str(src_dir / "install.py"), "test.example.com.py"]):
             mod = load_install()
             mod.DEPLOY_DIR = str(deploy_dir)
-            with pytest.raises(SystemExit) as exc_info:
-                mod.main()
-            assert exc_info.value.code == 0
+            mod.main()  # Should complete without SystemExit
 
         assert (deploy_dir / "test.example.com.py").exists()
 
@@ -88,9 +84,7 @@ class TestInstall:
              patch.object(sys, "argv", [str(src_dir / "install.py")]):
             mod = load_install()
             mod.DEPLOY_DIR = str(deploy_dir)
-            with pytest.raises(SystemExit) as exc_info:
-                mod.main()
-            assert exc_info.value.code == 0
+            mod.main()  # Should complete without SystemExit
 
         assert (deploy_dir / "a.mousebrains.com.py").exists()
         assert (deploy_dir / "b.mousebrains.com.py").exists()
@@ -124,9 +118,7 @@ class TestInstall:
                           [str(src_dir / "install.py"), "a.example.com", "b.example.com"]):
             mod = load_install()
             mod.DEPLOY_DIR = str(deploy_dir)
-            with pytest.raises(SystemExit) as exc_info:
-                mod.main()
-            assert exc_info.value.code == 0
+            mod.main()  # Should complete without SystemExit
 
         assert (deploy_dir / "a.example.com.py").exists()
         assert (deploy_dir / "b.example.com.py").exists()

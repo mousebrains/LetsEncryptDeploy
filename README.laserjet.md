@@ -16,7 +16,7 @@ sudo certbot certonly --key-type rsa --dns-cloudflare \
 
 ### Create the JSON config file
 
-Store the printer's EWS admin credentials in a JSON file readable only by root:
+Store the printer's EWS admin credentials in a JSON file:
 
 ```bash
 tee ~pat/.config/laserjet.json > /dev/null <<'EOF'
@@ -29,15 +29,6 @@ EOF
 
 ```bash
 chmod 600 ~pat/.config/laserjet.json
-```
-
-The JSON file format:
-
-```json
-{
-    "admin_user": "admin",
-    "admin_password": "YOUR_PASSWORD"
-}
 ```
 
 ### Install the deploy hook

@@ -37,13 +37,13 @@
 #  
 # Jan-2026 Pat Welch pat@mousebrains.com
 
-logDir = "/var/log"
-
 from argparse import ArgumentParser
 import logging
 import os
 import subprocess
 import sys
+
+logDir = "/var/log"
 
 def main():
     scriptName = os.path.basename(sys.argv[0]) # This script's name

@@ -20,15 +20,37 @@ Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` w
 
 ## Testing
 
-Dry-run all deploy hooks:
+### Manual testing (without certificate renewal)
+
+Set the certbot environment variables and run the script directly:
+
 ```bash
-sudo certbot renew --dry-run --run-deploy-hooks
+sudo RENEWED_DOMAINS="ucg.mousebrains.com" \
+     RENEWED_LINEAGE="/etc/letsencrypt/live/ucg.mousebrains.com" \
+     python3 /etc/letsencrypt/renewal-hooks/deploy/ucg.mousebrains.com.py --verbose
 ```
 
-Test a specific certificate:
+Verify the certificate was deployed:
+
 ```bash
-sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks
+echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x509 -noout -issuer -dates
 ```
+
+### Full renewal dry-run
+
+Note: `--dry-run` simulates renewal but does **not** run deploy hooks.
+
+```bash
+sudo certbot renew --dry-run
+```
+
+To actually run deploy hooks, use `--force-renewal` instead (this issues a real renewal):
+
+```bash
+sudo certbot renew --cert-name ucg.mousebrains.com --force-renewal
+```
+
+Run `script.py --help` to see all available options for each deploy hook.
 
 ## Logging
 

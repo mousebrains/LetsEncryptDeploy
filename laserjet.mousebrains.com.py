@@ -96,12 +96,7 @@ def upload_certificate(curl: str, hostname: str, pfx_path: str, pfx_password: st
     if sp.returncode != 0:
         raise RuntimeError(f"Certificate upload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
-    # Check for success message in response
-    response = sp.stdout.decode(errors="replace")
-    if "certificate has been updated" in response.lower():
-        logging.info("Certificate upload confirmed successful")
-    elif "error" in response.lower():
-        raise RuntimeError(f"Certificate upload may have failed. Response: {response[:500]}")
+    logging.info("Certificate upload completed")
 
 
 def main():

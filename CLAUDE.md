@@ -32,11 +32,13 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 # Syntax check a Python deploy hook
 python3 -m py_compile ucg.mousebrains.com.py
 
-# Test certbot renewal (dry run with deploy hooks)
-sudo certbot renew --dry-run --run-deploy-hooks
+# Manually test a deploy hook (without renewing the certificate)
+sudo RENEWED_DOMAINS="ucg.mousebrains.com" \
+     RENEWED_LINEAGE="/etc/letsencrypt/live/ucg.mousebrains.com" \
+     python3 /etc/letsencrypt/renewal-hooks/deploy/ucg.mousebrains.com.py --verbose
 
-# Test a specific certificate renewal
-sudo certbot renew --cert-name ucg.mousebrains.com --dry-run --run-deploy-hooks
+# Verify the deployed certificate
+echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x509 -noout -issuer -dates
 ```
 
 ## Code Conventions

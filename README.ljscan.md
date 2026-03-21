@@ -16,7 +16,7 @@ sudo certbot certonly --key-type rsa --dns-cloudflare \
 
 ### Create the JSON config file
 
-Store the printer's EWS admin credentials in a JSON file readable only by root:
+Store the printer's EWS admin credentials in a JSON file:
 
 ```bash
 tee ~pat/.config/ljscan.json > /dev/null <<'EOF'

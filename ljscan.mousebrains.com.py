@@ -1,27 +1,14 @@
 #! /usr/bin/python3
 #
-# This script is designed to install a renewed certificate on
-# an HP LaserJet MFP printer via its Embedded Web Server (EWS).
+# Certbot deploy hook for HP LaserJet MFP printer.
 #
-# The certificate must use an RSA key. ECC keys are not supported
-# by HP LaserJet printers.
+# Converts PEM cert+key to PKCS12, authenticates via CDM OAuth2
+# password grant, and uploads the certificate via the CDM API.
 #
-# Authentication uses the printer's CDM OAuth2 password grant:
-#   POST /cdm/oauth2/v1/token           -> get access token
-#   POST /cdm/certificate/v1/certificates -> upload PKCS12
+# The User-Agent is set to AppleWebKit because HP's printer firmware
+# rejects requests with certain other User-Agent strings.
 #
-# On your letsencrypt host:
-#  1) Create the certificate with an RSA key:
-#     sudo certbot certonly --key-type rsa --dns-cloudflare \
-#         --dns-cloudflare-credentials /home/pat/.config/cloudflare.token \
-#         -d ljscan.mousebrains.com
-#  2) Create a JSON config file with the printer's EWS admin credentials:
-#     tee ~pat/.config/ljscan.json <<< '{"admin_user":"admin","admin_password":"YOUR_PASSWORD"}'
-#     chmod 600 ~pat/.config/ljscan.json
-#  3) Install this script:
-#     sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
-#
-# The name of the script should be the FQDN of the printer (with .py extension)
+# See README.ljscan.md for setup instructions.
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
@@ -60,8 +47,8 @@ def curlPOST(curl, url, dataFile=None, contentType="application/json",
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
     logging.info("POST %s returncode=%s stdout=%s stderr=%s",
                  url, sp.returncode,
-                 sp.stdout.decode(errors="replace"),
-                 sp.stderr.decode(errors="replace"))
+                 sp.stdout.decode(errors="replace")[:500],
+                 sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0:
         raise RuntimeError(
             f"curl POST {url} failed with return code {sp.returncode}: "
@@ -208,8 +195,8 @@ def main():
         sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
         logging.info("openssl returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
-                     sp.stdout.decode(errors="replace"),
-                     sp.stderr.decode(errors="replace"))
+                     sp.stdout.decode(errors="replace")[:500],
+                     sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
             raise RuntimeError(
                 f"openssl pkcs12 failed with return code {sp.returncode}: "

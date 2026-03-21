@@ -62,7 +62,11 @@ To actually run deploy hooks, use `--force-renewal` instead (this issues a real 
 sudo certbot renew --cert-name ucg.mousebrains.com --force-renewal
 ```
 
-Run `script.py --help` to see all available options for each deploy hook.
+Run any deploy hook with `--help` to see all available options:
+
+```bash
+python3 ljscan.mousebrains.com.py --help
+```
 
 ## Logging
 

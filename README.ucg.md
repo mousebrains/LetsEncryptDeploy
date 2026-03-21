@@ -32,7 +32,13 @@ sudo ssh-copy-id ucg
 ### Install the deploy hook
 
 ```bash
-sudo cp ucg.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
+sudo python3 install.py ucg.mousebrains.com
+```
+
+### Test the deploy hook
+
+```bash
+sudo python3 test.py ucg.mousebrains.com
 ```
 
 ## On the UniFi Cloud Gateway

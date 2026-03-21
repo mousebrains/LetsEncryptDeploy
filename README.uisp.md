@@ -46,7 +46,13 @@ sudo scp -r /etc/letsencrypt/live/uisp.mousebrains.com uisp:/etc/certificates
 ### Install the deploy hook
 
 ```bash
-sudo cp uisp.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
+sudo python3 install.py uisp.mousebrains.com
+```
+
+### Test the deploy hook
+
+```bash
+sudo python3 test.py uisp.mousebrains.com
 ```
 
 ## On the UISP host

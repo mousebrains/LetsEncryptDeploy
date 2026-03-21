@@ -78,8 +78,8 @@ def main():
         sp = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("SCP returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
-                     sp.stdout.decode(errors="replace"),
-                     sp.stderr.decode(errors="replace"))
+                     sp.stdout.decode(errors="replace")[:500],
+                     sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
             raise RuntimeError(f"SCP failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
@@ -91,8 +91,8 @@ def main():
         sp = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("SSH returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
-                     sp.stdout.decode(errors="replace"),
-                     sp.stderr.decode(errors="replace"))
+                     sp.stdout.decode(errors="replace")[:500],
+                     sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 

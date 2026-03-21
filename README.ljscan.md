@@ -34,7 +34,13 @@ chmod 600 ~pat/.config/ljscan.json
 ### Install the deploy hook
 
 ```bash
-sudo cp ljscan.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
+sudo python3 install.py ljscan.mousebrains.com
+```
+
+### Test the deploy hook
+
+```bash
+sudo python3 test.py ljscan.mousebrains.com
 ```
 
 ## How it works

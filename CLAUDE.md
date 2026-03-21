@@ -34,10 +34,11 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 # Syntax check a Python deploy hook
 python3 -m py_compile ucg.mousebrains.com.py
 
-# Manually test a deploy hook (without renewing the certificate)
-sudo RENEWED_DOMAINS="ucg.mousebrains.com" \
-     RENEWED_LINEAGE="/etc/letsencrypt/live/ucg.mousebrains.com" \
-     python3 /etc/letsencrypt/renewal-hooks/deploy/ucg.mousebrains.com.py --verbose
+# Test a deploy hook (without renewing the certificate)
+sudo python3 test.py ucg.mousebrains.com
+
+# Install a deploy hook to certbot's directory
+sudo python3 install.py ucg.mousebrains.com
 
 # Verify the deployed certificate
 echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x509 -noout -issuer -dates
@@ -50,9 +51,9 @@ echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x
 - Certbot sets `RENEWED_DOMAINS` (space-separated) and `RENEWED_LINEAGE` environment variables when invoking deploy hooks.
 - Python scripts use `if __name__ == "__main__":` guards.
 - Python scripts log to `/var/log/<fqdn>.log` by default.
-- Subprocess calls should include `timeout=180` and use `.decode(errors="replace")` on output.
+- Subprocess calls should include an appropriate `timeout` (180s default, 600s for slow operations like UISP restart) and use `.decode(errors="replace")[:500]` on output.
 - Check subprocess return codes and raise on failure so the except block can log and `sys.exit(1)`.
-- Catch `KeyError` (missing env vars), `FileNotFoundError`, and `RuntimeError` explicitly; use generic `except Exception` as a fallback.
+- Catch `subprocess.TimeoutExpired`, `KeyError` (missing env vars), `FileNotFoundError`, and `RuntimeError` explicitly; use generic `except Exception` as a fallback.
 - Avoid exposing secrets on the command line; use environment variables (`-passout env:VAR`) for openssl and netrc files (`--netrc-file`) for curl.
 
 ## Security Notes

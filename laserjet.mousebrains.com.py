@@ -1,28 +1,11 @@
 #! /usr/bin/python3
 #
-# This script is designed to install a renewed certificate on
-# an HP Color LaserJet M452dn printer via its Embedded Web Server (EWS).
+# Certbot deploy hook for HP Color LaserJet M452dn printer.
 #
-# The certificate must use an RSA key. ECC keys are not supported
-# by HP LaserJet printers.
+# Converts PEM cert+key to PKCS12 and uploads it through the printer's
+# EWS form-based flow using HTTP Basic Auth via a temporary netrc file.
 #
-# Authentication uses HTTP Basic Auth. The upload flow:
-#   POST /hp/device/set_config_networkCerts.html/config      -> navigate to print certs
-#   POST /hp/device/set_config_networkPrintCerts.html/config -> navigate to import page
-#   POST /hp/device/Certificate.pfx                          -> upload PKCS12 file
-#
-# On your letsencrypt host:
-#  1) Create the certificate with an RSA key:
-#     sudo certbot certonly --key-type rsa --dns-cloudflare \
-#         --dns-cloudflare-credentials /home/pat/.config/cloudflare.token \
-#         -d laserjet.mousebrains.com
-#  2) Create a JSON config file with the printer's EWS admin credentials:
-#     tee ~pat/.config/laserjet.json <<< '{"admin_user":"admin","admin_password":"YOUR_PASSWORD"}'
-#     chmod 600 ~pat/.config/laserjet.json
-#  3) Install this script:
-#     sudo cp laserjet.mousebrains.com.py /etc/letsencrypt/renewal-hooks/deploy/
-#
-# The name of the script should be the FQDN of the printer (with .py extension)
+# See README.laserjet.md for setup instructions.
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
@@ -38,9 +21,7 @@ import tempfile
 logDir = "/var/log"
 
 
-def curlPOST(curl: str, url: str, data: str | None = None,
-             netrc_file: str | None = None,
-             verbose: bool = False) -> subprocess.CompletedProcess:
+def curlPOST(curl, url, data=None, netrc_file=None, verbose=False):
     """POST data with curl using a netrc file for authentication."""
     cmd = [curl, "-sk", "-X", "POST", url, "-L"]
     if verbose:
@@ -59,8 +40,8 @@ def curlPOST(curl: str, url: str, data: str | None = None,
     return sp
 
 
-def upload_certificate(curl: str, hostname: str, pfx_path: str, pfx_password: str,
-                       netrc_file: str, verbose: bool = False) -> None:
+def upload_certificate(curl, hostname, pfx_path, pfx_password,
+                       netrc_file, verbose=False):
     """Upload certificate through the EWS form-based flow."""
 
     base_url = f"https://{hostname}"
@@ -91,7 +72,7 @@ def upload_certificate(curl: str, hostname: str, pfx_path: str, pfx_password: st
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
     logging.info("Upload returncode=%s stdout=%s stderr=%s",
                  sp.returncode,
-                 sp.stdout.decode(errors="replace")[:1000],
+                 sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0:
         raise RuntimeError(f"Certificate upload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
@@ -192,8 +173,8 @@ def main():
         sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
         logging.info("openssl returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
-                     sp.stdout.decode(errors="replace"),
-                     sp.stderr.decode(errors="replace"))
+                     sp.stdout.decode(errors="replace")[:500],
+                     sp.stderr.decode(errors="replace")[:500])
         if sp.returncode != 0:
             raise RuntimeError(f"openssl pkcs12 failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 

@@ -148,8 +148,8 @@ def main():
             logging.info("Mismatch: %s not in %s", hostname, domains)
             sys.exit(0)
 
-        crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
-        keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
+        crtname = os.path.join(lineage, args.certName)
+        keyname = os.path.join(lineage, args.keyName)
 
         configFile = os.path.abspath(os.path.expanduser(args.configFile))
 
@@ -189,7 +189,7 @@ def main():
                 "-in", crtname,
                 "-passout", "env:PFX_PASSOUT",
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180, env=env)
+        sp = subprocess.run(cmd, capture_output=True, timeout=180, env=env)
         logging.info("openssl returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -202,6 +202,9 @@ def main():
                            netrcPath, verbose=args.verbose)
 
         logging.info("Deployment to %s completed successfully", hostname)
+    except subprocess.TimeoutExpired as e:
+        logging.error("Timed out: %s", e)
+        sys.exit(1)
     except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)

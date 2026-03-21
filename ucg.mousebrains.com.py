@@ -1,40 +1,12 @@
 #! /usr/bin/python3
 #
-# This script is designed to install a renewed certificate and key on
-# a UniFi Fiber Gateway.
+# Certbot deploy hook for UniFi Cloud Gateway.
 #
-# On your letsencrypt host:
-#  1) In your root account create a SSH key pair
-#  2) update /root/.ssh/config with the target Unifi Gateway information
+# SCPs fullchain.pem and privkey.pem to the gateway, then reloads nginx
+# via SSH to pick up the new certificate.
 #
-# On the Unifi Gateway:
-#  A) Enable SSH
-#  B) Log into the Unifi Gateway and add your public SSH key you'll be using into
-#     the authorized_keys file.
+# See README.ucg.md for setup instructions.
 #
-# On your letsencrypt host, where fqdn is the UniFi gateway fully qualified hostname:
-#  3) scp /etc/letsencrypt/live/fqdn/fullchain.pem /etc/letsencrypt/live/fqdn/privkey.pem fqdn:
-#
-# On the UniFi Gateway:
-#  C) cd /data/unifi-core/config
-#  D) There will be a certificate file like bf800083-907e-44b4-af66-0a0a92fe9acc.crt
-#     and a key file bf800083-907e-44b4-af66-0a0a92fe9acc.key
-#     The bf800 portion is the UUID, I think
-#     Copy these files for backup,
-#        cp bf800083-907e-44b4-af66-0a0a92fe9acc.crt bf800083-907e-44b4-af66-0a0a92fe9acc.crt.bak
-#        cp bf800083-907e-44b4-af66-0a0a92fe9acc.key bf800083-907e-44b4-af66-0a0a92fe9acc.key.bak
-#     Now make a symbolic link to the new LetsEncrypt certificate and key:
-#        ln -sf /root/fullchain.pem bf800083-907e-44b4-af66-0a0a92fe9acc.crt
-#        ln -sf /root/privkey.pem bf800083-907e-44b4-af66-0a0a92fe9acc.key
-#  E) Now reload the certificate:
-#     nginx -s reload
-#
-# Install this script on your letsencrypt host in /etc/letsencrypt/renewal-hooks/deploy
-# The script should run on the next renewal and install the updated certificate and key,
-# and force the webserver to reload them.
-#
-# The name of the script should be the FQDN of the UniFi Gateway (with .py extension)
-#  
 # Jan-2026 Pat Welch pat@mousebrains.com
 
 from argparse import ArgumentParser
@@ -89,8 +61,8 @@ def main():
             logging.info("Mismatch: %s not in %s", hostname, domains)
             sys.exit(0)
 
-        crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
-        keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
+        crtname = os.path.join(lineage, args.certName)
+        keyname = os.path.join(lineage, args.keyName)
 
         if not os.path.isfile(crtname):
             raise FileNotFoundError(f"Certificate file not found: {crtname}")
@@ -103,7 +75,7 @@ def main():
                 keyname,
                 hostname + ":",
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("SCP returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -116,7 +88,7 @@ def main():
                 hostname,
                 args.reload,
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("SSH returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -125,6 +97,9 @@ def main():
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
         logging.info("Deployment to %s completed successfully", hostname)
+    except subprocess.TimeoutExpired as e:
+        logging.error("Timed out: %s", e)
+        sys.exit(1)
     except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)

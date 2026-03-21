@@ -18,22 +18,34 @@ Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` w
 - [HP LaserJet MFP](README.ljscan.md)
 - [HP Color LaserJet M452dn](README.laserjet.md)
 
-## Testing
+## Installation
 
-### Manual testing (without certificate renewal)
-
-Set the certbot environment variables and run the script directly:
+Use `install.py` to copy deploy hooks into certbot's directory:
 
 ```bash
-sudo RENEWED_DOMAINS="ucg.mousebrains.com" \
-     RENEWED_LINEAGE="/etc/letsencrypt/live/ucg.mousebrains.com" \
-     python3 /etc/letsencrypt/renewal-hooks/deploy/ucg.mousebrains.com.py --verbose
+sudo python3 install.py ucg.mousebrains.com
+```
+
+Install all hooks at once:
+
+```bash
+sudo python3 install.py ucg.mousebrains.com uisp.mousebrains.com ljscan.mousebrains.com laserjet.mousebrains.com
+```
+
+## Testing
+
+### Using test.py
+
+The `test.py` script sets the certbot environment variables and runs a deploy hook locally:
+
+```bash
+sudo python3 test.py ljscan.mousebrains.com
 ```
 
 Verify the certificate was deployed:
 
 ```bash
-echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x509 -noout -issuer -dates
+echo | openssl s_client -connect ljscan.mousebrains.com:443 2>/dev/null | openssl x509 -noout -issuer -dates
 ```
 
 ### Full renewal dry-run
@@ -61,7 +73,7 @@ By default, scripts log to `/var/log/<fqdn>.log`. Pass `--logfile ""` to log to 
 1. Copy an existing script and rename it to `<your-fqdn>.py`.
 2. The hostname is derived from the filename automatically.
 3. Adjust the `--reload` command if the target device uses something other than `nginx -s reload`.
-4. Install the script to `/etc/letsencrypt/renewal-hooks/deploy/` and make it executable.
+4. Install with `sudo python3 install.py <your-fqdn>`.
 
 ## License
 

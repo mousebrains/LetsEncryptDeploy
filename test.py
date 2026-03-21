@@ -43,11 +43,16 @@ def main():
     print(f"  RENEWED_LINEAGE={lineage}")
     print()
 
-    sp = subprocess.run(
-        [sys.executable, script, "--verbose"],
-        env=env,
-        timeout=900,
-    )
+    try:
+        sp = subprocess.run(
+            [sys.executable, script, "--verbose"],
+            env=env,
+            timeout=900,
+        )
+        returncode = sp.returncode
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: {script} timed out after 900 seconds", file=sys.stderr)
+        returncode = 1
 
     print()
     logfile = f"/var/log/{hostname}.log"
@@ -60,7 +65,7 @@ def main():
     else:
         print(f"Log file not found: {logfile}")
 
-    sys.exit(sp.returncode)
+    sys.exit(returncode)
 
 if __name__ == "__main__":
     main()

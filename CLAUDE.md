@@ -16,6 +16,8 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 - `README.uisp.md` - UISP setup notes
 - `README.ljscan.md` - HP LaserJet MFP setup notes
 - `README.laserjet.md` - HP Color LaserJet M452dn setup notes
+- `test.py` - Manual testing helper (sets env vars and runs a deploy hook)
+- `install.py` - Installs deploy hooks to certbot's renewal-hooks/deploy directory
 
 ## Languages and Tools
 

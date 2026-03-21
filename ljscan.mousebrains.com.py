@@ -250,6 +250,9 @@ def main():
                 os.unlink(uploadPath)
 
         logging.info("Deployment to %s completed successfully", hostname)
+    except subprocess.TimeoutExpired as e:
+        logging.error("Timed out: %s", e)
+        sys.exit(1)
     except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)

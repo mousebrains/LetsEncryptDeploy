@@ -67,8 +67,8 @@ def main():
             logging.info("Mismatch: %s not in %s", hostname, domains)
             sys.exit(0)
 
-        crtname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.certName)))
-        keyname = os.path.abspath(os.path.expanduser(os.path.join(lineage, args.keyName)))
+        crtname = os.path.join(lineage, args.certName)
+        keyname = os.path.join(lineage, args.keyName)
 
         if not os.path.isfile(crtname):
             raise FileNotFoundError(f"Certificate file not found: {crtname}")
@@ -82,7 +82,7 @@ def main():
                 keyname,
                 hostname + ":" + args.certDir + "/",
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, capture_output=True, timeout=180)
         logging.info("SCP returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -96,7 +96,7 @@ def main():
                 hostname,
                 args.reload,
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=args.reloadTimeout)
+        sp = subprocess.run(cmd, capture_output=True, timeout=args.reloadTimeout)
         logging.info("SSH returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),
@@ -105,6 +105,9 @@ def main():
             raise RuntimeError(f"SSH reload failed with return code {sp.returncode}: {sp.stderr.decode(errors='replace')}")
 
         logging.info("Deployment to %s completed successfully", hostname)
+    except subprocess.TimeoutExpired as e:
+        logging.error("Timed out: %s", e)
+        sys.exit(1)
     except (FileNotFoundError, KeyError, RuntimeError) as e:
         logging.error("%s", e)
         sys.exit(1)

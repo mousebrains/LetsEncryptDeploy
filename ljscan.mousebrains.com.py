@@ -87,7 +87,7 @@ def authenticate(curl, hostname, username, password, verbose=False):
     })
 
     # Write POST body to temp file to avoid credentials on command line
-    fd, dataPath = tempfile.mkstemp(prefix="auth-", mode=0o600)
+    fd, dataPath = tempfile.mkstemp(prefix="auth-")
     try:
         with os.fdopen(fd, "w") as fp:
             fp.write(token_data)
@@ -224,7 +224,7 @@ def main():
                              verbose=args.verbose)
 
         # Write bearer token to a temp header file to avoid it on command line
-        fd, headerPath = tempfile.mkstemp(prefix="header-", mode=0o600)
+        fd, headerPath = tempfile.mkstemp(prefix="header-")
         with os.fdopen(fd, "w") as fp:
             fp.write(f"Authorization: Bearer {token}")
 
@@ -237,7 +237,7 @@ def main():
             "requestType": "importId",
             "version": "1.1.0",
         })
-        fd, uploadPath = tempfile.mkstemp(prefix="upload-", mode=0o600)
+        fd, uploadPath = tempfile.mkstemp(prefix="upload-")
         try:
             with os.fdopen(fd, "w") as fp:
                 fp.write(uploadPayload)

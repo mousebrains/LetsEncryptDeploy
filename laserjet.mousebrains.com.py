@@ -169,7 +169,7 @@ def main():
             raise RuntimeError(f"admin_password not set in {configFile}")
 
         # Create a temporary netrc file for curl authentication
-        fd, netrcPath = tempfile.mkstemp(prefix="netrc-", mode=0o600)
+        fd, netrcPath = tempfile.mkstemp(prefix="netrc-")
         with os.fdopen(fd, "w") as fp:
             fp.write(f"machine {hostname} login {adminUser} password {adminPassword}\n")
 

@@ -37,6 +37,8 @@ def main():
     parser.add_argument("--reload", type=str,
                         default="app/unms-cli restart",
                         help="Command to restart UISP on the remote host")
+    parser.add_argument("--reloadTimeout", type=int, default=600,
+                        help="Timeout in seconds for the reload command")
     parser.add_argument("--ssh", type=str, default="/usr/bin/ssh", help="SSH command to use")
     parser.add_argument("--scp", type=str, default="/usr/bin/scp", help="SCP command to use")
     args = parser.parse_args()
@@ -94,7 +96,7 @@ def main():
                 hostname,
                 args.reload,
                 )
-        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
+        sp = subprocess.run(cmd, shell=False, capture_output=True, timeout=args.reloadTimeout)
         logging.info("SSH returncode=%s stdout=%s stderr=%s",
                      sp.returncode,
                      sp.stdout.decode(errors="replace"),

@@ -46,7 +46,7 @@ def main():
     sp = subprocess.run(
         [sys.executable, script, "--verbose"],
         env=env,
-        timeout=300,
+        timeout=900,
     )
 
     print()

@@ -44,8 +44,14 @@ def curl_request(
                  method, url, sp.returncode,
                  sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
-    if sp.returncode != 0:
+    if sp.returncode != 0 and sp.returncode != 56:
         msg = f"curl {method} {url} failed with return code {sp.returncode}"
+        raise RuntimeError(msg)
+    if sp.returncode == 56 and sp.stdout:
+        logging.warning("curl %s %s returned 56 (connection reset) "
+                        "but response body was received; continuing", method, url)
+    elif sp.returncode == 56:
+        msg = f"curl {method} {url} failed with return code 56 and no response body"
         raise RuntimeError(msg)
     return sp
 

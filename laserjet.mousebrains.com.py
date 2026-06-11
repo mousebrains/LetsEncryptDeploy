@@ -54,11 +54,15 @@ def upload_certificate(
     curl: str,
     hostname: str,
     pfx_path: str,
-    pfx_password: str,
+    pfx_password_file: str,
     netrc_file: str,
     verbose: bool = False,
 ) -> None:
-    """Upload certificate through the EWS form-based flow."""
+    """Upload certificate through the EWS form-based flow.
+
+    The PKCS12 password is read from *pfx_password_file* via curl's
+    ``-F name=<file`` form so it never appears on the command line.
+    """
     base_url = f"https://{hostname}"
 
     # Step 1: Navigate to certificate configuration
@@ -79,7 +83,7 @@ def upload_certificate(
               netrc_file=netrc_file, verbose=verbose,
               extra_args=[
                   "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
-                  "-F", f"CertPwd={pfx_password}",
+                  "-F", f"CertPwd=<{pfx_password_file}",
                   "-F", "ImportCert=Import",
               ])
 
@@ -178,8 +182,14 @@ def main() -> None:
                 msg = f"openssl pkcs12 failed with return code {sp.returncode}"
                 raise RuntimeError(msg)
 
+            # Write the PFX password to a temp file so it doesn't appear
+            # on the curl command line
+            pfx_pw_path = os.path.join(tmpdir, "pfx-password")
+            with open(pfx_pw_path, "w") as fp:
+                fp.write(pfx_password)
+
             # Upload the certificate
-            upload_certificate(args.curl, hostname, pfx_path, pfx_password,
+            upload_certificate(args.curl, hostname, pfx_path, pfx_pw_path,
                                netrc_path, verbose=args.verbose)
 
         logging.info("Deployment to %s completed successfully", hostname)

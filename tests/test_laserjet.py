@@ -114,6 +114,8 @@ class TestUploadCertificate:
         pfx.write_bytes(b"FAKE PFX")
         netrc = tmp_path / "netrc"
         netrc.write_text("machine h login a password p\n")
+        pw_file = tmp_path / "pfx-password"
+        pw_file.write_text("testpw")
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -122,10 +124,13 @@ class TestUploadCertificate:
 
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             mod = load_laserjet()
-            mod.upload_certificate("/usr/bin/curl", "h", str(pfx), "testpw", str(netrc))
+            mod.upload_certificate("/usr/bin/curl", "h", str(pfx), str(pw_file),
+                                   str(netrc))
             step3_cmd = mock_run.call_args_list[2][0][0]
             assert any("CertFile=@" in arg for arg in step3_cmd)
-            assert any("CertPwd=testpw" in arg for arg in step3_cmd)
+            # Password is read from a file (-F 'CertPwd=<file'), never on argv
+            assert any(f"CertPwd=<{pw_file}" in arg for arg in step3_cmd)
+            assert not any("testpw" in arg for arg in step3_cmd if "CertPwd=<" not in arg)
             assert "ImportCert=Import" in step3_cmd
 
 

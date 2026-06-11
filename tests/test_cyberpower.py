@@ -20,6 +20,40 @@ def load_cyberpower():
     return mod
 
 
+class TestRedactTokens:
+    """Tests for the redact_tokens log-sanitizing helper."""
+
+    def test_redacts_token_values(self):
+        mod = load_cyberpower()
+        body = '{"result": "success", "token": "SECRET123", "temp_token": "TMP456"}'
+        out = mod.redact_tokens(body)
+        assert "SECRET123" not in out
+        assert "TMP456" not in out
+        assert '"token"' in out
+        assert '"temp_token"' in out
+
+    def test_leaves_other_fields_alone(self):
+        mod = load_cyberpower()
+        body = '{"result": "success", "expires_in": 180}'
+        assert mod.redact_tokens(body) == body
+
+    def test_curl_request_log_redacts_tokens(self, caplog):
+        """Session tokens in response bodies must not reach the log."""
+        import logging as _logging
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = b'{"result": "success", "token": "SESSION456"}'
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result), \
+             caplog.at_level(_logging.INFO):
+            mod = load_cyberpower()
+            mod.curl_request("/usr/bin/curl", "GET", "https://example.com/api")
+        assert "SESSION456" not in caplog.text
+        assert "REDACTED" in caplog.text
+
+
 class TestCurlRequest:
     """Tests for the curl_request helper."""
 

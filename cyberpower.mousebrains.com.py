@@ -12,12 +12,20 @@
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from argparse import ArgumentParser
 
 LOG_DIR = "/var/log"
+
+TOKEN_PATTERN = re.compile(r'("(?:temp_)?token"\s*:\s*")[^"]*(")')
+
+
+def redact_tokens(text: str) -> str:
+    """Mask session token values in response bodies before logging."""
+    return TOKEN_PATTERN.sub(r"\1REDACTED\2", text)
 
 
 def curl_request(
@@ -42,7 +50,7 @@ def curl_request(
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
     logging.info("%s %s returncode=%s stdout=%s stderr=%s",
                  method, url, sp.returncode,
-                 sp.stdout.decode(errors="replace")[:500],
+                 redact_tokens(sp.stdout.decode(errors="replace"))[:500],
                  sp.stderr.decode(errors="replace")[:500])
     if sp.returncode != 0 and sp.returncode != 56:
         msg = f"curl {method} {url} failed with return code {sp.returncode}"
@@ -90,10 +98,11 @@ def login(
                       data_file=creds_path, verbose=verbose)
     result = parse_response(sp, "Login")
 
-    temp_token = str(result["temp_token"]) if "temp_token" in result else None
-    if not temp_token:
+    raw_temp_token = result.get("temp_token")
+    if not raw_temp_token:
         msg = f"Login failed: no temp_token in response: {result}"
         raise RuntimeError(msg)
+    temp_token = str(raw_temp_token)
 
     logging.info("LOGIN: verifying temp token")
     sp = curl_request(curl, "GET", f"https://{hostname}/api/login/status/",
@@ -104,7 +113,11 @@ def login(
         msg = f"Login verification failed: {result}"
         raise RuntimeError(msg)
 
-    token = str(result["token"])
+    raw_token = result.get("token")
+    if not raw_token:
+        msg = f"Login verification succeeded but no token in response: {result}"
+        raise RuntimeError(msg)
+    token = str(raw_token)
     logging.info("LOGIN: authenticated, expires_in=%s", result.get("expires_in"))
     return token
 

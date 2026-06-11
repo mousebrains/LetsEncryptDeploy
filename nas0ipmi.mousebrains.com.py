@@ -67,13 +67,23 @@ def bmc_login(
     username: str,
     password: str,
     cookies_file: str,
+    tmpdir: str,
     verbose: bool = False,
 ) -> None:
-    """Login to BMC web interface and store session cookie."""
+    """Login to BMC web interface and store session cookie.
+
+    The POST body is read from a temp file so credentials never appear
+    on the curl command line (visible in `ps` while curl runs).
+    """
+    encoded_user = urllib.parse.quote(username, safe="")
     encoded_password = urllib.parse.quote(password, safe="")
+    login_data_path = os.path.join(tmpdir, "login-data")
+    with open(login_data_path, "w") as fp:
+        fp.write(f"name={encoded_user}&pwd={encoded_password}")
+
     cmd = [curl, "-sk", "-c", cookies_file, "-X", "POST",
            f"https://{hostname}/cgi/login.cgi",
-           "-d", f"name={username}&pwd={encoded_password}"]
+           "-d", f"@{login_data_path}"]
     if verbose:
         cmd.append("-v")
     sp = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -232,7 +242,7 @@ def main() -> None:
             cookies_file = os.path.join(tmpdir, "cookies")
 
             bmc_login(args.curl, hostname, admin_user, admin_password,
-                      cookies_file, verbose=args.verbose)
+                      cookies_file, tmpdir, verbose=args.verbose)
             csrf_token = get_csrf_token(args.curl, hostname, cookies_file,
                                         verbose=args.verbose)
             upload_certificate(args.curl, hostname, crtname, keyname,

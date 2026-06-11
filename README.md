@@ -14,6 +14,8 @@ Certbot deploy hooks for automatically deploying renewed Let's Encrypt certifica
 - `uisp.mousebrains.com.py` -- UISP (copies cert/key via SCP, restarts UISP)
 - `ljscan.mousebrains.com.py` -- HP LaserJet MFP (converts to PKCS12, uploads via CDM OAuth2 API)
 - `laserjet.mousebrains.com.py` -- HP Color LaserJet M452dn (converts to PKCS12, uploads via HTTP Basic Auth)
+- `cyberpower.mousebrains.com.py` -- CyberPower UPS RMCARD205 (uploads combined PEM via REST API)
+- `nas0ipmi.mousebrains.com.py` -- Supermicro BMC/IPMI (uploads cert/key via web CGI, resets BMC)
 
 Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` when invoking deploy hooks; the script compares the domain list against its own filename and exits silently if there is no match.
 
@@ -23,6 +25,8 @@ Each script is named after the FQDN it handles. Certbot sets `RENEWED_DOMAINS` w
 - [UISP](README.uisp.md)
 - [HP LaserJet MFP](README.ljscan.md)
 - [HP Color LaserJet M452dn](README.laserjet.md)
+- [CyberPower RMCARD205](README.cyberpower.md)
+- [Supermicro BMC](README.nas0ipmi.md)
 
 ## Installation
 

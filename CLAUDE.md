@@ -12,12 +12,18 @@ Let's Encrypt certificate deployment scripts for network devices. The Python scr
 - `uisp.mousebrains.com.py` - Certbot deploy hook for UISP (Python, uses SSH/SCP)
 - `ljscan.mousebrains.com.py` - Certbot deploy hook for HP LaserJet MFP (Python, uses openssl + curl)
 - `laserjet.mousebrains.com.py` - Certbot deploy hook for HP Color LaserJet M452dn (Python, uses openssl + curl)
+- `cyberpower.mousebrains.com.py` - Certbot deploy hook for CyberPower UPS RMCARD205 (Python, REST API via curl)
+- `nas0ipmi.mousebrains.com.py` - Certbot deploy hook for Supermicro BMC/IPMI (Python, CGI web interface via curl)
 - `README.ucg.md` - UniFi Cloud Gateway setup notes
 - `README.uisp.md` - UISP setup notes
 - `README.ljscan.md` - HP LaserJet MFP setup notes
 - `README.laserjet.md` - HP Color LaserJet M452dn setup notes
+- `README.cyberpower.md` - CyberPower RMCARD205 setup notes
+- `README.nas0ipmi.md` - Supermicro BMC setup notes
 - `test.py` - Manual testing helper (sets env vars and runs a deploy hook)
 - `install.py` - Installs deploy hooks to certbot's renewal-hooks/deploy directory
+- `tests/` - pytest suite (mocked subprocess; no network or devices needed)
+- `pyproject.toml` - ruff, mypy, and pytest configuration
 - `CHANGELOG.md` - Project changelog
 - `CONTRIBUTING.md` - Contribution guidelines and development workflow
 
@@ -58,7 +64,7 @@ echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x
 - Subprocess calls should include an appropriate `timeout` (180s default, 600s for slow operations like UISP restart) and use `.decode(errors="replace")[:500]` on output.
 - Check subprocess return codes and raise on failure so the except block can log and `sys.exit(1)`.
 - Catch `subprocess.TimeoutExpired`, `KeyError` (missing env vars), `FileNotFoundError`, and `RuntimeError` explicitly; use generic `except Exception` as a fallback.
-- Avoid exposing secrets on the command line; use environment variables (`-passout env:VAR`) for openssl and netrc files (`--netrc-file`) for curl.
+- Avoid exposing secrets on the command line; use environment variables (`-passout env:VAR`) for openssl, and netrc files (`--netrc-file`), body files (`-d @file`), or form-value files (`-F 'name=<file'`) for curl.
 
 ## Security Notes
 
@@ -67,7 +73,10 @@ echo | openssl s_client -connect ucg.mousebrains.com:443 2>/dev/null | openssl x
 - Deploy hooks use SSH key authentication configured in `/root/.ssh/config`.
 - HP LaserJet M452dn admin credentials are stored in `~pat/.config/laserjet.json` (mode 600).
 - HP LaserJet MFP admin credentials are stored in `~pat/.config/ljscan.json` (mode 600).
-- HP LaserJet printers require RSA keys; ECC keys are not supported.
+- CyberPower RMCARD205 admin credentials are stored in `~pat/.config/cyberpower.json` (mode 600).
+- Supermicro BMC admin credentials are stored in `~pat/.config/nas0ipmi.json` (mode 600).
+- HP LaserJet printers and the Supermicro BMC require RSA keys; ECC keys are not supported.
+- Session tokens must be redacted from logged response bodies (see `redact_tokens` in the cyberpower hook).
 
 ## License
 

@@ -146,7 +146,7 @@ class TestBmcLogin:
         with patch("subprocess.run", return_value=mock_result):
             mod = load_nas0ipmi()
             mod.bmc_login("/usr/bin/curl", "bmc.example.com",
-                          "admin", "pass", str(tmp_path / "cookies"))
+                          "admin", "pass", str(tmp_path / "cookies"), str(tmp_path))
 
     def test_login_failure(self, tmp_path):
         """Should raise RuntimeError on curl failure."""
@@ -159,10 +159,10 @@ class TestBmcLogin:
             mod = load_nas0ipmi()
             with pytest.raises(RuntimeError, match="BMC login failed"):
                 mod.bmc_login("/usr/bin/curl", "bmc.example.com",
-                              "admin", "pass", str(tmp_path / "cookies"))
+                              "admin", "pass", str(tmp_path / "cookies"), str(tmp_path))
 
     def test_password_url_encoded(self, tmp_path):
-        """Should URL-encode the password in the POST data."""
+        """Should URL-encode the password in the POST data file."""
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = b""
@@ -171,11 +171,30 @@ class TestBmcLogin:
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             mod = load_nas0ipmi()
             mod.bmc_login("/usr/bin/curl", "bmc.example.com",
-                          "admin", "p@ss&word=1", str(tmp_path / "cookies"))
+                          "admin", "p@ss&word=1", str(tmp_path / "cookies"),
+                          str(tmp_path))
             cmd = mock_run.call_args[0][0]
             d_idx = cmd.index("-d")
-            post_data = cmd[d_idx + 1]
+            data_arg = cmd[d_idx + 1]
+            assert data_arg.startswith("@")
+            with open(data_arg[1:]) as fp:
+                post_data = fp.read()
             assert "p%40ss%26word%3D1" in post_data
+
+    def test_password_not_on_command_line(self, tmp_path):
+        """Credentials must never appear in curl's argv (visible in ps)."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = b""
+        mock_result.stderr = b""
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            mod = load_nas0ipmi()
+            mod.bmc_login("/usr/bin/curl", "bmc.example.com",
+                          "admin", "SuperSecret99", str(tmp_path / "cookies"),
+                          str(tmp_path))
+            cmd = " ".join(mock_run.call_args[0][0])
+            assert "SuperSecret99" not in cmd
 
 
 class TestGetCsrfToken:

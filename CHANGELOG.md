@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- nas0ipmi: BMC login credentials are now sent via a temp file (`curl -d @file`) instead of appearing on the curl command line, where they were visible in `ps` while the request ran.
+- laserjet: the PKCS12 password is now read from a temp file (`curl -F 'CertPwd=<file'`) instead of appearing on the curl command line.
+- cyberpower: session token values (`token`, `temp_token`) are redacted from logged response bodies.
+
+### Changed
+- cyberpower: a login-verify response without a `token` field now raises a descriptive RuntimeError instead of a bare KeyError.
+- README and CLAUDE.md script lists updated for the cyberpower and nas0ipmi hooks; CLAUDE.md structure now covers `tests/` and `pyproject.toml`.
+
 ## [2026-03-21]
 
 ### Added

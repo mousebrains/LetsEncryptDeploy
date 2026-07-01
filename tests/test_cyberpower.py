@@ -371,7 +371,7 @@ class TestCyberpowerMain:
             return result
 
         with patch.object(sys, "argv",
-                          [f"{hostname}.py", "--logfile", "",
+                          [f"{hostname}.py", "--logfile", "", "--no-verify",
                            "--configFile", str(config_file)]), \
              patch("subprocess.run", side_effect=mock_subprocess):
             mod = load_cyberpower()
@@ -406,7 +406,7 @@ class TestCyberpowerMain:
             return result
 
         with patch.object(sys, "argv",
-                          [f"{hostname}.py", "--logfile", "",
+                          [f"{hostname}.py", "--logfile", "", "--no-verify",
                            "--configFile", str(config_file)]), \
              patch("subprocess.run", side_effect=mock_subprocess):
             mod = load_cyberpower()
@@ -429,3 +429,54 @@ class TestCyberpowerMain:
             mod = load_cyberpower()
             with pytest.raises(SystemExit, match="1"):
                 mod.main()
+
+
+class TestVerify:
+    """Tests for the post-deploy certificate verification helpers."""
+
+    def _write_pem(self, path, der):
+        import base64
+        b64 = base64.b64encode(der).decode()
+        path.write_text(
+            f"-----BEGIN CERTIFICATE-----\n{b64}\n-----END CERTIFICATE-----\n")
+
+    def test_leaf_cert_der_roundtrip(self, tmp_path):
+        """Should decode the first PEM certificate back to its DER bytes."""
+        mod = load_cyberpower()
+        der = b"\x30\x82\x01\x02 fake der bytes"
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, der)
+        assert mod.leaf_cert_der(str(pem)) == der
+
+    def test_verify_matches(self, tmp_path):
+        """Should return quietly when the served cert matches the deployed one."""
+        mod = load_cyberpower()
+        der = b"matching der"
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, der)
+        with patch.object(mod, "served_cert_der", return_value=der):
+            mod.verify_served_certificate("h", str(pem), attempts=1, delay=0)
+
+    def test_verify_mismatch_raises(self, tmp_path):
+        """Should raise after retrying when the served cert never matches."""
+        mod = load_cyberpower()
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, b"deployed der")
+        with patch.object(mod, "served_cert_der", return_value=b"other der"), \
+             patch.object(mod.time, "sleep") as mock_sleep:
+            with pytest.raises(RuntimeError, match="Verification failed"):
+                mod.verify_served_certificate("h", str(pem), attempts=3, delay=0)
+            assert mock_sleep.call_count == 2
+
+    def test_verify_deadline(self, tmp_path):
+        """Should stop at the absolute deadline even if attempts remain."""
+        mod = load_cyberpower()
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, b"deployed der")
+        with patch.object(mod, "served_cert_der", return_value=b"other der"), \
+             patch.object(mod.time, "monotonic", side_effect=[0.0, 1000.0]), \
+             patch.object(mod.time, "sleep") as mock_sleep:
+            with pytest.raises(RuntimeError, match="deadline"):
+                mod.verify_served_certificate("h", str(pem), attempts=100,
+                                              delay=10, deadline=50)
+            assert mock_sleep.call_count == 0

@@ -45,26 +45,39 @@ sudo python3 test.py ucg.mousebrains.com
 
 ### Enable SSH
 
-Enable SSH on the gateway through the UniFi controller UI.
+Enable SSH on the gateway through the UniFi controller UI, and copy the deploy
+host's SSH key to the gateway (`sudo ssh-copy-id ucg`).
 
-### Set up certificate symlinks
+### How UniFi OS serves the certificate
 
-In `/data/unifi-core/config/`, find the certificate UUID files (e.g. `bf800083-...-.crt` and `.key`). Back them up, then create symbolic links to the Let's Encrypt files:
+UniFi OS's "User Certificates" feature tracks the active certificate by UUID
+(`activeCertId` in `/data/unifi-core/config/settings.yaml`) and points nginx at
+`<uuid>.crt` / `<uuid>.key` via `/data/unifi-core/config/http/local-certs.conf`:
 
-```bash
-ln -sf /root/fullchain.pem bf800083-907e-44b4-af66-0a0a92fe9acc.crt
+```text
+ssl_certificate     /data/unifi-core/config/<uuid>.crt;
+ssl_certificate_key /data/unifi-core/config/<uuid>.key;
 ```
 
-```bash
-ln -sf /root/privkey.pem bf800083-907e-44b4-af66-0a0a92fe9acc.key
-```
-
-### Reload nginx
-
-```bash
-nginx -s reload
-```
+**Firmware updates regenerate this UUID** (and wipe any symlinks you create by
+hand), so the hook does not hard-code it — it reads the active paths out of
+`local-certs.conf` at deploy time. No manual symlink setup is required.
 
 ## How it works
 
-The deploy hook SCPs `fullchain.pem` and `privkey.pem` to the gateway's home directory, then runs `nginx -s reload` via SSH to pick up the new certificate.
+1. SCP `fullchain.pem` and `privkey.pem` to the gateway's home directory (`/root`).
+2. SSH a small script that reads the active `ssl_certificate` / `ssl_certificate_key`
+   paths from `local-certs.conf`, overwrites those files in place (preserving
+   their ownership/mode), and runs `nginx -s reload`.
+3. Reconnect to `:443` and verify the served leaf certificate matches the
+   deployed one; the deploy fails loudly if it does not.
+
+Use `--no-verify` to skip the wire check, and `--certConf` to override the
+`local-certs.conf` path.
+
+## Notes
+
+- If a firmware update repoints `local-certs.conf` to a fresh self-signed cert,
+  the gateway serves that until the next renewal; the hook re-installs the
+  Let's Encrypt cert (and verification confirms it) on the next deploy. Run
+  `sudo python3 test.py ucg.mousebrains.com` to re-install immediately.

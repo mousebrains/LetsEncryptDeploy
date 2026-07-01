@@ -250,9 +250,12 @@ class TestUploadCertificate:
             cmd = mock_run.call_args[0][0]
             f_args = [cmd[i + 1] for i, v in enumerate(cmd) if v == "-F"]
             assert len(f_args) == 3
-            assert any("cert_file=" in a and "x-x509-ca-cert" in a for a in f_args)
-            assert any("key_file=" in a and "x-x509-ca-cert" in a for a in f_args)
+            assert any(a.startswith("cert_file=@") for a in f_args)
+            assert any(a.startswith("key_file=@") for a in f_args)
             assert any("CSRF-TOKEN=csrf_tok" in a for a in f_args)
+            # The private key must NOT be tagged as a certificate MIME type,
+            # or the BMC stores the cert but drops the key.
+            assert not any("x-x509-ca-cert" in a for a in f_args)
 
 
 class TestValidateCertificate:
@@ -358,31 +361,34 @@ class TestNas0ipmiMain:
             result.returncode = 0
             result.stderr = b""
             if call_count == 1:
+                # convert_key_to_pkcs1 (openssl rsa)
+                result.stdout = b""
+            elif call_count == 2:
                 # bmc_login
                 result.stdout = b"<html>redirect</html>"
-            elif call_count == 2:
+            elif call_count == 3:
                 # get_csrf_token
                 result.stdout = CSRF_HTML.encode()
-            elif call_count == 3:
+            elif call_count == 4:
                 # upload_certificate
                 result.stdout = b"<html>uploaded</html>"
-            elif call_count == 4:
+            elif call_count == 5:
                 # validate_certificate
                 result.stdout = VALIDATE_OK.encode()
-            elif call_count == 5:
+            elif call_count == 6:
                 # bmc_reset
                 result.stdout = b""
             return result
 
         with patch.object(sys, "argv",
                           [f"{hostname}.py", "--logfile", "",
-                           "--configFile", str(config_file)]), \
+                           "--no-verify", "--configFile", str(config_file)]), \
              patch("subprocess.run", side_effect=mock_subprocess):
             mod = load_nas0ipmi()
             mod.main()
 
-        # login + csrf + upload + validate + reset = 5
-        assert call_count == 5
+        # openssl + login + csrf + upload + validate + reset = 6
+        assert call_count == 6
 
     def test_no_reset_flag(self, cert_dir, config_file):
         """Should skip BMC reset when --no-reset is passed."""
@@ -399,12 +405,14 @@ class TestNas0ipmiMain:
             result.returncode = 0
             result.stderr = b""
             if call_count == 1:
-                result.stdout = b"<html>redirect</html>"
+                result.stdout = b""
             elif call_count == 2:
-                result.stdout = CSRF_HTML.encode()
+                result.stdout = b"<html>redirect</html>"
             elif call_count == 3:
-                result.stdout = b"<html>uploaded</html>"
+                result.stdout = CSRF_HTML.encode()
             elif call_count == 4:
+                result.stdout = b"<html>uploaded</html>"
+            elif call_count == 5:
                 result.stdout = VALIDATE_OK.encode()
             return result
 
@@ -415,8 +423,8 @@ class TestNas0ipmiMain:
             mod = load_nas0ipmi()
             mod.main()
 
-        # login + csrf + upload + validate = 4 (no reset)
-        assert call_count == 4
+        # openssl + login + csrf + upload + validate = 5 (no reset)
+        assert call_count == 5
 
     def test_validation_failure_exits(self, cert_dir, config_file):
         """Should exit 1 when certificate validation fails."""
@@ -433,12 +441,14 @@ class TestNas0ipmiMain:
             result.returncode = 0
             result.stderr = b""
             if call_count == 1:
-                result.stdout = b"<html>redirect</html>"
+                result.stdout = b""
             elif call_count == 2:
-                result.stdout = CSRF_HTML.encode()
+                result.stdout = b"<html>redirect</html>"
             elif call_count == 3:
-                result.stdout = b"<html>uploaded</html>"
+                result.stdout = CSRF_HTML.encode()
             elif call_count == 4:
+                result.stdout = b"<html>uploaded</html>"
+            elif call_count == 5:
                 result.stdout = VALIDATE_FAIL.encode()
             return result
 
@@ -464,3 +474,56 @@ class TestNas0ipmiMain:
             mod = load_nas0ipmi()
             with pytest.raises(SystemExit, match="1"):
                 mod.main()
+
+
+class TestVerify:
+    """Tests for the post-deploy certificate verification helpers."""
+
+    def _write_pem(self, path, der):
+        import base64
+        b64 = base64.b64encode(der).decode()
+        path.write_text(
+            f"-----BEGIN CERTIFICATE-----\n{b64}\n-----END CERTIFICATE-----\n")
+
+    def test_leaf_cert_der_roundtrip(self, tmp_path):
+        """Should decode the first PEM certificate back to its DER bytes."""
+        mod = load_nas0ipmi()
+        der = b"\x30\x82\x01\x02 fake der bytes"
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, der)
+        assert mod.leaf_cert_der(str(pem)) == der
+
+    def test_verify_matches(self, tmp_path):
+        """Should return quietly when the served cert matches the deployed one."""
+        mod = load_nas0ipmi()
+        der = b"matching der"
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, der)
+        with patch.object(mod, "served_cert_der", return_value=der):
+            mod.verify_served_certificate("h", str(pem), attempts=1, delay=0,
+                                          initial_delay=0)
+
+    def test_verify_mismatch_raises(self, tmp_path):
+        """Should raise after retrying when the served cert never matches."""
+        mod = load_nas0ipmi()
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, b"deployed der")
+        with patch.object(mod, "served_cert_der", return_value=b"other der"), \
+             patch.object(mod.time, "sleep") as mock_sleep:
+            with pytest.raises(RuntimeError, match="Verification failed"):
+                mod.verify_served_certificate("h", str(pem), attempts=3, delay=0,
+                                              initial_delay=0)
+            assert mock_sleep.call_count == 2
+
+    def test_verify_deadline(self, tmp_path):
+        """Should stop at the absolute deadline even if attempts remain."""
+        mod = load_nas0ipmi()
+        pem = tmp_path / "c.pem"
+        self._write_pem(pem, b"deployed der")
+        with patch.object(mod, "served_cert_der", return_value=b"other der"), \
+             patch.object(mod.time, "monotonic", side_effect=[0.0, 1000.0]), \
+             patch.object(mod.time, "sleep") as mock_sleep:
+            with pytest.raises(RuntimeError, match="deadline"):
+                mod.verify_served_certificate("h", str(pem), attempts=100,
+                                              delay=10, deadline=50, initial_delay=0)
+            assert mock_sleep.call_count == 0

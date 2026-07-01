@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **All hooks were reporting success without confirming the device actually served the new cert**, so three devices silently served stale/expired certificates while certbot's local certs were current. All six hooks now verify the served leaf certificate on `:443` after deploy and fail loudly on mismatch (`--no-verify` to skip). Verification is bounded by an absolute wall-clock deadline (`VERIFY_DEADLINE`, checked each iteration via a monotonic clock) so a deploy hook can never hang certbot: 120s for the fast devices, 180s for uisp, 300s for nas0ipmi (covers its ~90s BMC reboot).
+- laserjet: never actually installed a cert — `curl -X POST … -L` re-POSTed the printer's `303` redirect and got a `405`, and the upload used wrong form fields. Now follows the redirect as a GET with a cookie jar, uses the real EWS fields (`FileName`/`Password`/`Finish`), and treats HTTP ≥ 400 as failure (`--fail-with-body`).
+- nas0ipmi: renewals uploaded and validated but never took effect. The warm CGI reset (`op=main_bmcreset`) stores a replaced cert but does not re-load it; the hook now does a **cold reset** via `ipmitool … mc reset cold` (requires ipmitool + IPMI-over-LAN). Also stops tagging the private key with a certificate MIME type and converts the key to PKCS#1 before upload.
+- ucg: a UniFi OS firmware update repointed the served certificate to a new UUID (`local-certs.conf` / `settings.yaml activeCertId`), orphaning the symlink the hook relied on. The hook now reads the active cert/key paths from `local-certs.conf` at deploy time, overwrites those files, and reloads nginx.
+
 ### Security
 - nas0ipmi: BMC login credentials are now sent via a temp file (`curl -d @file`) instead of appearing on the curl command line, where they were visible in `ps` while the request ran.
 - laserjet: the PKCS12 password is now read from a temp file (`curl -F 'CertPwd=<file'`) instead of appearing on the curl command line.

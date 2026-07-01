@@ -13,17 +13,99 @@
 # Jan-2026 Pat Welch pat@mousebrains.com
 
 import base64
+import hashlib
 import json
 import logging
 import os
 import secrets
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from argparse import ArgumentParser
 
 LOG_DIR = "/var/log"
+
+# Post-deploy verification: how long to wait for the printer to serve the new
+# certificate (the web server restarts briefly after an import).
+VERIFY_ATTEMPTS = 6
+VERIFY_DELAY = 10.0
+VERIFY_DEADLINE = 120.0
+
+
+def leaf_cert_der(pem_path: str) -> bytes:
+    """Return the DER bytes of the first certificate in a PEM file."""
+    begin = "-----BEGIN CERTIFICATE-----"
+    end = "-----END CERTIFICATE-----"
+    with open(pem_path) as fp:
+        text = fp.read()
+    start = text.find(begin)
+    stop = text.find(end)
+    if start == -1 or stop == -1:
+        msg = f"No PEM certificate found in {pem_path}"
+        raise RuntimeError(msg)
+    return base64.b64decode("".join(text[start + len(begin):stop].split()))
+
+
+def served_cert_der(hostname: str, port: int = 443, timeout: float = 15.0) -> bytes:
+    """Return the DER bytes of the leaf certificate served on host:port.
+
+    Uses an unverified context so an expired or mismatched cert can still be
+    fetched for comparison.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((hostname, port), timeout=timeout) as sock, \
+            ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+        der = ssock.getpeercert(binary_form=True)
+    if not der:
+        msg = f"No certificate returned by {hostname}:{port}"
+        raise RuntimeError(msg)
+    return der
+
+
+def verify_served_certificate(
+    hostname: str,
+    crtname: str,
+    attempts: int = VERIFY_ATTEMPTS,
+    delay: float = VERIFY_DELAY,
+    deadline: float = VERIFY_DEADLINE,
+    port: int = 443,
+) -> None:
+    """Confirm the printer is actually serving the just-deployed certificate.
+
+    Compares the SHA-256 of the served leaf cert to the deployed one, retrying
+    to allow the web server to restart. Raises on mismatch so a deploy that
+    does not take effect becomes a hard failure.
+    """
+    expected = hashlib.sha256(leaf_cert_der(crtname)).hexdigest()
+    start = time.monotonic()
+    last = "no attempt made"
+    for attempt in range(1, attempts + 1):
+        try:
+            served = hashlib.sha256(served_cert_der(hostname, port)).hexdigest()
+            if served == expected:
+                logging.info("Verified: %s is serving the deployed certificate",
+                             hostname)
+                return
+            last = f"served {served[:16]}... != deployed {expected[:16]}..."
+        except (OSError, ssl.SSLError) as exc:
+            last = f"connect/TLS error: {exc}"
+        elapsed = time.monotonic() - start
+        logging.info("Verify attempt %d/%d for %s (%.0fs elapsed): %s",
+                     attempt, attempts, hostname, elapsed, last)
+        if attempt >= attempts:
+            break
+        if elapsed + delay >= deadline:
+            last = f"{last}; stopped at {deadline:.0f}s deadline"
+            break
+        time.sleep(delay)
+    msg = f"Verification failed: {hostname} not serving new certificate ({last})"
+    raise RuntimeError(msg)
 
 
 def curl_post(
@@ -136,6 +218,8 @@ def main() -> None:
                         help="OpenSSL command to use")
     parser.add_argument("--curl", type=str, default="/usr/bin/curl",
                         help="curl command to use")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip verifying the printer serves the new certificate")
     args = parser.parse_args()
 
     logfilename = None
@@ -232,6 +316,9 @@ def main() -> None:
                       f"https://{hostname}{args.uploadPath}",
                       data_file=upload_path,
                       header_file=header_path)
+
+        if not args.no_verify:
+            verify_served_certificate(hostname, crtname)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:

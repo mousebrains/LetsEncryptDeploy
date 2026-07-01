@@ -9,28 +9,52 @@
 #
 # Jan-2026 Pat Welch pat@mousebrains.com
 
+import base64
+import hashlib
 import json
 import logging
 import os
 import secrets
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
+import time
 from argparse import ArgumentParser
 
 LOG_DIR = "/var/log"
+
+# Post-deploy verification: how long to wait for the printer to start serving
+# the new certificate (the EWS briefly restarts HTTPS after an import).
+VERIFY_ATTEMPTS = 6
+VERIFY_DELAY = 10.0
+VERIFY_DEADLINE = 120.0
 
 
 def curl_post(
     curl: str,
     url: str,
     netrc_file: str | None = None,
+    cookies_file: str | None = None,
     data: str | None = None,
     extra_args: list[str] | None = None,
     verbose: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
-    """POST with curl using a netrc file for authentication."""
-    cmd = [curl, "-sk", "-X", "POST", url, "-L"]
+    """POST with curl using a netrc file for authentication.
+
+    ``--fail-with-body`` makes curl exit non-zero on an HTTP >= 400 response
+    (e.g. the 405 the printer used to return) while still capturing the body
+    for the log, so a rejected upload is no longer reported as success.
+
+    ``-X POST`` is deliberately NOT used: steps 1 and 2 answer with ``303 See
+    Other`` and forcing POST would make curl re-POST the redirect target and
+    get a 405. Letting curl follow the 303 as a GET (the RFC behaviour) keeps
+    the wizard's session cookie flowing through the ``cookies_file`` jar.
+    """
+    cmd = [curl, "-sk", "--fail-with-body", "-L", url]
+    if cookies_file:
+        cmd += ["-c", cookies_file, "-b", cookies_file]
     if verbose:
         cmd.append("-v")
     if netrc_file:
@@ -50,41 +74,123 @@ def curl_post(
     return sp
 
 
+def leaf_cert_der(pem_path: str) -> bytes:
+    """Return the DER bytes of the first certificate in a PEM file."""
+    begin = "-----BEGIN CERTIFICATE-----"
+    end = "-----END CERTIFICATE-----"
+    with open(pem_path) as fp:
+        text = fp.read()
+    start = text.find(begin)
+    stop = text.find(end)
+    if start == -1 or stop == -1:
+        msg = f"No PEM certificate found in {pem_path}"
+        raise RuntimeError(msg)
+    return base64.b64decode("".join(text[start + len(begin):stop].split()))
+
+
+def served_cert_der(hostname: str, port: int = 443, timeout: float = 15.0) -> bytes:
+    """Return the DER bytes of the leaf certificate served on host:port.
+
+    Uses an unverified context so an expired or mismatched cert can still be
+    fetched for comparison.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((hostname, port), timeout=timeout) as sock, \
+            ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+        der = ssock.getpeercert(binary_form=True)
+    if not der:
+        msg = f"No certificate returned by {hostname}:{port}"
+        raise RuntimeError(msg)
+    return der
+
+
+def verify_served_certificate(
+    hostname: str,
+    crtname: str,
+    attempts: int = VERIFY_ATTEMPTS,
+    delay: float = VERIFY_DELAY,
+    initial_delay: float = 0.0,
+    deadline: float = VERIFY_DEADLINE,
+    port: int = 443,
+) -> None:
+    """Confirm the device is actually serving the just-deployed certificate.
+
+    Compares the SHA-256 of the served leaf cert to the deployed one, retrying
+    to allow the device to restart its web server. Raises on mismatch so a
+    silently-ignored upload becomes a hard failure.
+    """
+    expected = hashlib.sha256(leaf_cert_der(crtname)).hexdigest()
+    start = time.monotonic()
+    if initial_delay:
+        time.sleep(initial_delay)
+    last = "no attempt made"
+    for attempt in range(1, attempts + 1):
+        try:
+            served = hashlib.sha256(served_cert_der(hostname, port)).hexdigest()
+            if served == expected:
+                logging.info("Verified: %s is serving the deployed certificate",
+                             hostname)
+                return
+            last = f"served {served[:16]}... != deployed {expected[:16]}..."
+        except (OSError, ssl.SSLError) as exc:
+            last = f"connect/TLS error: {exc}"
+        elapsed = time.monotonic() - start
+        logging.info("Verify attempt %d/%d for %s (%.0fs elapsed): %s",
+                     attempt, attempts, hostname, elapsed, last)
+        if attempt >= attempts:
+            break
+        if elapsed + delay >= deadline:
+            last = f"{last}; stopped at {deadline:.0f}s deadline"
+            break
+        time.sleep(delay)
+    msg = f"Verification failed: {hostname} not serving new certificate ({last})"
+    raise RuntimeError(msg)
+
+
 def upload_certificate(
     curl: str,
     hostname: str,
     pfx_path: str,
     pfx_password_file: str,
     netrc_file: str,
+    cookies_file: str,
     verbose: bool = False,
 ) -> None:
     """Upload certificate through the EWS form-based flow.
 
-    The PKCS12 password is read from *pfx_password_file* via curl's
-    ``-F name=<file`` form so it never appears on the command line.
+    The three steps navigate the printer's certificate wizard; the session is
+    carried across them via *cookies_file*. The PKCS12 password is read from
+    *pfx_password_file* via curl's ``-F name=<file`` form so it never appears
+    on the command line.
+
+    Field names come from the live EWS import form served by the M452dn's
+    Virata-EmWeb firmware: the file field is ``FileName``, the password field
+    is ``Password``, and ``Finish`` is the submit button.
     """
     base_url = f"https://{hostname}"
 
-    # Step 1: Navigate to certificate configuration
+    # Step 1: Navigate to certificate configuration (303 -> Configure page)
     logging.info("Step 1: Navigating to certificate configuration page")
     curl_post(curl, f"{base_url}/hp/device/set_config_networkCerts.html/config",
               data="ConfigurePrintCert=Configure",
-              netrc_file=netrc_file, verbose=verbose)
+              netrc_file=netrc_file, cookies_file=cookies_file, verbose=verbose)
 
-    # Step 2: Select import certificate option
+    # Step 2: Select import certificate option (303 -> import form)
     logging.info("Step 2: Selecting import certificate option")
     curl_post(curl, f"{base_url}/hp/device/set_config_networkPrintCerts.html/config",
               data="ConfigOpt=ImptCert&Next=Next",
-              netrc_file=netrc_file, verbose=verbose)
+              netrc_file=netrc_file, cookies_file=cookies_file, verbose=verbose)
 
     # Step 3: Upload the PKCS12 file via multipart form
     logging.info("Step 3: Uploading PKCS12 certificate")
     curl_post(curl, f"{base_url}/hp/device/Certificate.pfx",
-              netrc_file=netrc_file, verbose=verbose,
+              netrc_file=netrc_file, cookies_file=cookies_file, verbose=verbose,
               extra_args=[
-                  "-F", f"CertFile=@{pfx_path};filename=Certificate.pfx",
-                  "-F", f"CertPwd=<{pfx_password_file}",
-                  "-F", "ImportCert=Import",
+                  "-F", f"FileName=@{pfx_path};filename=Certificate.pfx",
+                  "-F", f"Password=<{pfx_password_file}",
+                  "-F", "Finish=",
               ])
 
     logging.info("Certificate upload completed")
@@ -110,6 +216,8 @@ def main() -> None:
                         help="OpenSSL command to use")
     parser.add_argument("--curl", type=str, default="/usr/bin/curl",
                         help="curl command to use")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip verifying the printer serves the new certificate")
     args = parser.parse_args()
 
     logfilename = None
@@ -189,8 +297,12 @@ def main() -> None:
                 fp.write(pfx_password)
 
             # Upload the certificate
+            cookies_path = os.path.join(tmpdir, "cookies")
             upload_certificate(args.curl, hostname, pfx_path, pfx_pw_path,
-                               netrc_path, verbose=args.verbose)
+                               netrc_path, cookies_path, verbose=args.verbose)
+
+        if not args.no_verify:
+            verify_served_certificate(hostname, crtname)
 
         logging.info("Deployment to %s completed successfully", hostname)
     except subprocess.TimeoutExpired as e:

@@ -207,11 +207,10 @@ def get_csrf_token(
 def convert_key_to_pkcs1(openssl: str, key_path: str, out_path: str) -> None:
     """Rewrite a PKCS#8 RSA key as traditional PKCS#1.
 
-    certbot writes PKCS#8 (``-----BEGIN PRIVATE KEY-----``). This BMC firmware
-    validates such a key in-session but silently fails to persist it, leaving
-    the stored cert paired with the old key (``SSL_VALIDATE`` = 0 in any later
-    session). The traditional PKCS#1 form (``-----BEGIN RSA PRIVATE KEY-----``)
-    is stored correctly.
+    certbot writes the key in PKCS#8 format. This BMC firmware validates such
+    a key in-session but silently fails to persist it, leaving the stored cert
+    paired with the old key (``SSL_VALIDATE`` = 0 in any later session).
+    Re-encoding it to the traditional PKCS#1 (RSA) format is stored correctly.
     """
     cmd = (openssl, "rsa", "-in", key_path, "-out", out_path)
     sp = subprocess.run(cmd, capture_output=True, timeout=180)

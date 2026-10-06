@@ -21,6 +21,7 @@ def cert_dir(tmp_path):
     live_dir = tmp_path / "live" / hostname
     live_dir.mkdir(parents=True)
     (live_dir / "fullchain.pem").write_text("FAKE CERT DATA\n")
+    (live_dir / "cert.pem").write_text("FAKE CERT DATA\n")
     (live_dir / "privkey.pem").write_text("FAKE KEY DATA\n")
     return live_dir
 

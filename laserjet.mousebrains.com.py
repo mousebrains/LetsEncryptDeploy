@@ -68,6 +68,10 @@ def curl_post(
                  url, sp.returncode,
                  sp.stdout.decode(errors="replace")[:500],
                  sp.stderr.decode(errors="replace")[:500])
+    # The first 500 chars are only the HTML <head>; the printer's status
+    # message is further down, so keep the whole page when debugging.
+    logging.debug("Full response body from %s:\n%s",
+                  url, sp.stdout.decode(errors="replace"))
     if sp.returncode != 0:
         msg = f"curl POST {url} failed with return code {sp.returncode}"
         raise RuntimeError(msg)
@@ -205,7 +209,9 @@ def main() -> None:
                         default=os.path.join(LOG_DIR, f"{hostname}.log"),
                         help="Where to log to, empty for stderr")
     parser.add_argument("--verbose", action="store_true", help="Enable logging.debug messages")
-    parser.add_argument("--certName", type=str, default="fullchain.pem",
+    # Leaf only: since Let's Encrypt moved to the YR1 intermediate the
+    # printer silently ignores a PKCS12 that includes the chain.
+    parser.add_argument("--certName", type=str, default="cert.pem",
                         help="Which certificate file to use")
     parser.add_argument("--keyName", type=str, default="privkey.pem",
                         help="Which key file to use")
